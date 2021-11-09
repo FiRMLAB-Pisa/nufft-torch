@@ -23,15 +23,279 @@ model-based MRI reconstructions.
      IEEE Trans Med Imaging. 2014;33(12):2311-2322. doi:10.1109/TMI.2014.2337321
 
 """
-# from typing import List, Tuple, Union
+from typing import List, Tuple, Dict, Union
 
 import numpy as np
 import numba as nb
 
 import torch
-# from torch import Tensor
+from torch import Tensor
 
-#%% CPU specific routines
+from src import _util
+
+# CUDA settings
+threadsperblock = 32
+
+
+def prepare_interpolator(coord: Tensor,
+                         shape: Union[List[int, ...], Tuple[int, ...]],
+                         width: Union[List[int, ...], Tuple[int, ...]],
+                         beta: Union[List[float, ...], Tuple[float, ...]],
+                         device: str) -> Dict:
+    """Precompute nufft object for faster t_nufft / t_nufft_adjoint.
+    Args:
+        coord (tensor): Coordinate array of shape [nframes, ..., ndim]
+        shape (list or tuple of ints): Overesampled grid size.
+        width (list or tuple of int): Interpolation kernel full-width.
+        beta (list or tuple of floats): Kaiser-Bessel beta parameter.
+        device (str): identifier of computational device used for interpolation.
+
+    Returns:
+        dict: structure containing sparse interpolator matrix.
+    """
+    # parse input sizes
+    ndim = coord.shape[-1]
+    pts_shape = coord.shape[:-1]
+    npts = _util.prod(pts_shape)
+
+    # arg reshape
+    coord = coord.reshape([npts, ndim]).transpose()
+
+    # preallocate interpolator
+    index = []
+    value = []
+
+    for i in range(ndim):
+        # kernel value
+        value.append(torch.zeros((npts, width[i]), dtype=torch.float32))
+        # kernel index
+        index.append(torch.zeros((npts, width[i]), dtype=torch.uint32))
+
+    # actual precomputation
+    for i in range(ndim):
+        _prepare_interpolator(value[i], index[i],
+                              coord[i], width[i], beta[i], shape[i])
+
+    # reformat for output
+    for i in range(ndim):
+        index[i] = index[i].reshape([*pts_shape, width[i]]).to(device)
+        value[i] = value[i].reshape([*pts_shape, width[i]]).to(device)
+
+    # get device identifier
+    if device == 'cpu':
+        device_str = device
+    else:
+        device_str = device[:4]  # cuda instead of cuda:n
+
+    return {'index': index, 'value': value, 'ndim': ndim, 'device': device_str}
+
+
+def interpolate(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
+    """Interpolation from array to points specified by coordinates.
+    Args:
+        data_out (tensor): Preallocated Non-Cartesian array for output.
+        data_in (tensor): Input Cartesian array.
+        sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
+        adjoint_basis (tensor): Adjoint low rank subspace projection operator (subspace to time); can be None.
+
+    Returns:
+        data_out (tensor): Output Non-Cartesian array.
+    """
+    # unpack input
+    index = sparse_coeff['index']
+    value = sparse_coeff['value']
+    ndim = sparse_coeff['ndim']
+    device = sparse_coeff['device']
+
+    # get input sizes
+    nframes, npts = index[0].shape[0], index[0].shape[1]
+
+    # reformat data for computation
+    ibatch_shape = data_in.shape[1:-ndim]
+    ibatch_size = _util.prod(ibatch_shape)  # ncoils * nslices * ...
+
+    obatch_shape = data_out.shape[1:-1]
+    obatch_size = _util.prod(obatch_shape)  # ncoils * nslices * ...
+
+    data_in = data_in.reshape([data_in.shape[0], ibatch_size, *data_in.shape[-ndim:]])
+    data_out = data_out.reshape([nframes, obatch_size, npts])
+
+    # do actual interpolation
+    if device == 'cpu':
+        do_interpolation[ndim-1](data_out, data_in,
+                                 value, index, adjoint_basis)
+    else:
+        do_interpolation_cuda[ndim-1](
+            data_out, data_in, value, index, adjoint_basis)
+
+    # reformat for output
+    data_out = data_out.reshape([nframes, *obatch_shape, npts])
+
+    return data_out
+
+
+def gridding(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, basis: Union[None, Tensor]) -> Tensor:
+    """Gridding of points specified by coordinates to array.
+    Args:
+        data_out (tensor): Preallocated Cartesian array for output.
+        data_in (tensor): Input Non-Cartesian array.
+        sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
+        basis (tensor): Low rank subspace projection operator (time to subspace); can be None.
+
+    Returns:
+        data_out (tensor): Output Cartesian array.
+    """
+    # unpack input
+    index = sparse_coeff['index']
+    value = sparse_coeff['value']
+    ndim = sparse_coeff['ndim']
+    device = sparse_coeff['device']
+
+    # get input sizes
+    nframes, npts = index[0].shape[0], index[0].shape[1]
+
+    # reformat data for computation
+    obatch_shape = data_out.shape[1:-ndim]
+    obatch_size = _util.prod(obatch_shape)  # ncoils * nslices * ...
+
+    # argument reshape
+    data_in = data_in.reshape([nframes, obatch_size, npts])
+    data_out = data_out.reshape([data_out.shape[0], obatch_size, *data_out.shape[-ndim:]])
+
+    # do actual gridding
+    if device == 'cpu':
+        do_gridding[ndim-1](data_out, data_in, value, index, basis)
+    else:
+        do_gridding_cuda[ndim-1](
+            data_out, data_in, value, index, basis)
+
+    # reformat for output
+    data_out = data_out.reshape([data_out.shape[0], *obatch_shape, *data_out.shape[-ndim:]])
+
+    return data_out
+
+
+def prepare_toeplitz(coord: Tensor,
+                     shape: Union[List[int, ...], Tuple[int, ...]],
+                     width: Union[List[int, ...], Tuple[int, ...]],
+                     beta: Union[List[float, ...], Tuple[float, ...]],
+                     device: str,
+                     basis: Tensor,
+                     dcf: Tensor) -> Dict:
+    """Compute spatio-temporal kernel for fast self-adjoint operation.
+    Args:
+        coord (tensor): Coordinate array of shape [nframes, ..., ndim]
+        shape (list or tuple of ints): Overesampled grid size.
+        width (list or tuple of int): Interpolation kernel full-width.
+        beta (list or tuple of floats): Kaiser-Bessel beta parameter.
+        device (str): identifier of computational device used for interpolation.
+        basis (tensor): low-rank temporal subspace basis.
+        dcf (tensor): k-space sampling density compensation weights.
+
+    Returns:
+        st_kernel (array): Fourier transform of system transfer Point Spread Function
+                           (spatiotemporal kernel)
+    """
+    # get dimensions
+    ndim = coord.shape[-1]
+    npts = coord.shape[-2]
+
+    # if dcf are not provided, assume uniform sampling density
+    if dcf is None:
+        dcf = torch.ones(coord.shape[:-1], torch.float32, device=device)
+    else:
+        dcf = dcf.to(device)
+
+    if dcf.ndim > 1 and basis is not None:
+        dcf = dcf[:, None, :]
+
+    # if spatio-temporal basis is provided, check reality and offload to device
+    if basis is not None:
+        islowrank = True
+        isreal = not(torch.is_complex(basis))
+        ncoeff, nframes = basis.shape
+        basis = basis.to(device)
+        adjoint_basis = basis.conj().T.to(device)
+
+    else:
+        islowrank = False
+        isreal = False
+        nframes, ncoeff = coord.shape[0], coord.shape[0]
+
+    if isreal:
+        dtype = torch.float32
+    else:
+        dtype = torch.complex64
+
+    if basis is not None:
+        basis = basis.to(dtype)
+        adjoint_basis = adjoint_basis.to(dtype)
+
+    if basis is not None:
+        # initialize temporary arrays
+        delta = torch.ones((nframes, ncoeff, npts),
+                           dtype=torch.complex64, device=device)
+        delta = delta * adjoint_basis[:, :, None]
+
+        # preallocate output
+        st_kernel = torch.zeros(
+            [ncoeff, ncoeff, *shape], dtype=torch.complex64, device=device)
+
+    else:
+        # initialize temporary arrays
+        delta = torch.ones(
+            (nframes, npts), dtype=torch.complex64, device=device)
+
+        # preallocate output
+        st_kernel = torch.zeros([nframes, *shape], dtype=torch.complex64, device=device)
+
+    # calculate interpolator
+    interpolator = prepare_interpolator(coord, shape, width, beta, device)
+    st_kernel = gridding(st_kernel, delta, interpolator, basis)
+
+    # keep only real part if basis is real
+    if isreal:
+        st_kernel = st_kernel.real
+
+    # fftshift kernel to accelerate computation
+    st_kernel = torch.fft.ifftshift(st_kernel, dim=list(range(-ndim,0)))
+
+    if basis is not None:
+        st_kernel = st_kernel.reshape([*st_kernel.shape[:2], _util.prod(st_kernel.shape[2:])])
+    else:
+        st_kernel = st_kernel[:, None, ...]
+
+    # normalize
+    st_kernel /= torch.quantile(st_kernel, 0.95)
+
+    # remove NaN
+    st_kernel = torch.nan_to_num(st_kernel)
+
+    # get device identifier
+    if device == 'cpu':
+        device_str = device
+    else:
+        device_str = device[:4]  # cuda instead of cuda:n
+
+    return {'value': st_kernel, 'islowrank': islowrank, 'device': device_str}
+
+
+def toeplitz(data_out, data_in, toeplitz_kernel):
+    """Perform in-place fast self-adjoint by multiplication in k-space with spatio-temporal kernel.
+    Args:
+        data_out (tensor): Output tensor of oversampled gridded k-space data.
+        data_in (tensor): Input tensor of oversampled gridded k-space data.
+        st_kernel (dict): Fourier transform of system transfer Point Spread Function
+    """
+    if toeplitz_kernel['islowrank' ] is True:
+        if  toeplitz_kernel['device' ] == 'cpu':
+            do_selfadjoint_interpolation(data_out, data_in, toeplitz_kernel)
+        else:
+            do_selfadjoint_interpolation_cuda(data_out, data_in, toeplitz_kernel)
+    else:
+        data_out = toeplitz_kernel['value'] * data_in
+
+# %% CPU specific routines
 
 
 @nb.njit(fastmath=True, cache=True)  # pragma: no cover
@@ -89,6 +353,9 @@ def _get_prepare_interpolator():
                 interp_index[i, x_i] = (x_0 + x_i) % grid_shape
 
     return _prepare_interpolator
+
+
+_prepare_interpolator = _get_prepare_interpolator()
 
 
 def _get_interpolate():
@@ -186,7 +453,7 @@ def _get_interpolate_lowrank():
     """
 
     @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-    def _interpolate2(noncart_data, cart_data, interp_value, interp_index, basis_adj):
+    def _interpolate2(noncart_data, cart_data, interp_value, interp_index, adjoint_basis):
 
         # get sizes
         ncoeff, batch_size, _, _ = cart_data.shape
@@ -223,13 +490,13 @@ def _get_interpolate_lowrank():
                     # while gathering data
                     for coeff in range(ncoeff):
                         noncart_data[frame, batch, point] += \
-                            val * basis_adj[frame, coeff] * \
+                            val * adjoint_basis[frame, coeff] * \
                             cart_data[coeff, batch, idy, idx]
 
         return noncart_data
 
     @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-    def _interpolate3(noncart_data, cart_data, interp_value, interp_index, basis_adj):
+    def _interpolate3(noncart_data, cart_data, interp_value, interp_index, adjoint_basis):
 
         # get sizes
         ncoeff, batch_size, _, _, _ = cart_data.shape
@@ -271,12 +538,57 @@ def _get_interpolate_lowrank():
                         # while gathering data
                         for coeff in range(ncoeff):
                             noncart_data[frame, batch, point] += \
-                                val * basis_adj[frame, coeff] * \
+                                val * adjoint_basis[frame, coeff] * \
                                 cart_data[coeff, batch, idz, idy, idx]
 
         return noncart_data
 
     return _interpolate2, _interpolate3
+
+
+def _do_interpolation2(data_out, data_in, value, index, adjoint_basis):
+    """ 2D Interpolation routine wrapper. """
+    data_out = _util.pytorch2numba(data_out)
+    data_in = _util.pytorch2numba(data_in)
+    value = _util.pytorch2numba(value)
+    index = _util.pytorch2numba(index)
+
+    if adjoint_basis is None:
+        _get_interpolate()[0](data_out, data_in, value, index)
+    else:
+        adjoint_basis = _util.pytorch2numba(adjoint_basis)
+        _get_interpolate_lowrank()[0](
+            data_out, data_in, value, index, adjoint_basis)
+        adjoint_basis = _util.numba2pytorch(adjoint_basis)
+
+    data_out = _util.numba2pytorch(data_out)
+    data_in = _util.numba2pytorch(data_in)
+    value = _util.numba2pytorch(value)
+    index = _util.numba2pytorch(index)
+
+
+def _do_interpolation3(data_out, data_in, value, index, adjoint_basis):
+    """ 3D Interpolation routine wrapper. """
+    data_out = _util.pytorch2numba(data_out)
+    data_in = _util.pytorch2numba(data_in)
+    value = _util.pytorch2numba(value)
+    index = _util.pytorch2numba(index)
+
+    if adjoint_basis is None:
+        _get_interpolate()[1](data_out, data_in, value, index)
+    else:
+        adjoint_basis = _util.pytorch2numba(adjoint_basis)
+        _get_interpolate_lowrank()[1](
+            data_out, data_in, value, index, adjoint_basis)
+        adjoint_basis = _util.numba2pytorch(adjoint_basis)
+
+    data_out = _util.numba2pytorch(data_out)
+    data_in = _util.numba2pytorch(data_in)
+    value = _util.numba2pytorch(value)
+    index = _util.numba2pytorch(index)
+
+
+do_interpolation = [_do_interpolation2, _do_interpolation3]
 
 
 def _get_gridding():
@@ -471,12 +783,55 @@ def _get_gridding_lowrank():
     return _gridding2, _gridding3
 
 
+def _do_gridding2(data_out, data_in, value, index, basis):
+    """ 2D Gridding routine wrapper. """
+    data_out = _util.pytorch2numba(data_out)
+    data_in = _util.pytorch2numba(data_in)
+    value = _util.pytorch2numba(value)
+    index = _util.pytorch2numba(index)
+
+    if basis is None:
+        _get_gridding()[0](data_out, data_in, value, index)
+    else:
+        basis = _util.pytorch2numba(basis)
+        _get_gridding_lowrank()[0](data_out, data_in, value, index, basis)
+        basis = _util.numba2pytorch(basis)
+
+    data_out = _util.numba2pytorch(data_out)
+    data_in = _util.numba2pytorch(data_in)
+    value = _util.numba2pytorch(value)
+    index = _util.numba2pytorch(index)
+
+
+def _do_gridding3(data_out, data_in, value, index, basis):
+    """ 3D Gridding routine wrapper. """
+    data_out = _util.pytorch2numba(data_out)
+    data_in = _util.pytorch2numba(data_in)
+    value = _util.pytorch2numba(value)
+    index = _util.pytorch2numba(index)
+
+    if basis is None:
+        _get_gridding()[1](data_out, data_in, value, index)
+    else:
+        basis = _util.pytorch2numba(basis)
+        _get_gridding_lowrank()[1](data_out, data_in, value, index, basis)
+        basis = _util.numba2pytorch(basis)
+
+    data_out = _util.numba2pytorch(data_out)
+    data_in = _util.numba2pytorch(data_in)
+    value = _util.numba2pytorch(value)
+    index = _util.numba2pytorch(index)
+
+
+do_gridding = [_do_gridding2, _do_gridding3]
+
+
 @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-def _interp_selfadjoint(data_out, toeplitz_matrix, data_in):
+def _interp_selfadjoint(data_out, data_in, toeplitz_matrix):
 
     n_coeff, batch_size, _ = data_in.shape
 
-    for i in nb.prange(n_coeff * batch_size): # pylint: disable=not-an-iterable
+    for i in nb.prange(n_coeff * batch_size):  # pylint: disable=not-an-iterable
         coeff = i // batch_size
         batch = i % batch_size
 
@@ -486,10 +841,21 @@ def _interp_selfadjoint(data_out, toeplitz_matrix, data_in):
     return data_out
 
 
+def do_selfadjoint_interpolation(data_out, data_in, toeplitz_matrix):
+    """ Toeplitz routine wrapper. """
+    data_out = _util.pytorch2numba(data_out)
+    data_in = _util.pytorch2numba(data_in)
+    toeplitz_matrix = _util.pytorch2numba(toeplitz_matrix)
+
+    _interp_selfadjoint(data_out, data_in, toeplitz_matrix)
+
+    data_out = _util.numba2pytorch(data_out)
+    data_in = _util.numba2pytorch(data_in)
+    toeplitz_matrix = _util.numba2pytorch(toeplitz_matrix)
+
+
 # %% GPU specific routines
 if torch.cuda.is_available():
-    # CUDA settings
-    threadsperblock = 32
 
     @nb.cuda.jit(device=True, inline=True)  # pragma: no cover
     def _update_real(output, index, value):
@@ -609,7 +975,7 @@ if torch.cuda.is_available():
         """
 
         @nb.cuda.jit(fastmath=True)  # pragma: no cover
-        def _interpolate2_cuda(noncart_data, cart_data, interp_value, interp_index, basis_adj):
+        def _interpolate2_cuda(noncart_data, cart_data, interp_value, interp_index, adjoint_basis):
 
             # get sizes
             ncoeff, batch_size, _, _ = cart_data.shape
@@ -647,13 +1013,13 @@ if torch.cuda.is_available():
                         # while gathering data
                         for coeff in range(ncoeff):
                             noncart_data[frame, batch, point] += \
-                                val * basis_adj[frame, coeff] * \
+                                val * adjoint_basis[frame, coeff] * \
                                 cart_data[coeff, batch, idy, idx]
 
             return noncart_data
 
         @nb.cuda.jit(fastmath=True)  # pragma: no cover
-        def _interpolate3_cuda(noncart_data, cart_data, interp_value, interp_index, basis_adj):
+        def _interpolate3_cuda(noncart_data, cart_data, interp_value, interp_index, adjoint_basis):
 
             # get sizes
             ncoeff, batch_size, _, _, _ = cart_data.shape
@@ -696,12 +1062,64 @@ if torch.cuda.is_available():
                             # while gathering data
                             for coeff in range(ncoeff):
                                 noncart_data[frame, batch, point] += \
-                                    val * basis_adj[frame, coeff] * \
+                                    val * adjoint_basis[frame, coeff] * \
                                     cart_data[coeff, batch, idz, idy, idx]
 
             return noncart_data
 
         return _interpolate2_cuda, _interpolate3_cuda
+
+    def _do_interpolation_cuda2(data_out, data_in, value, index, adjoint_basis):
+        # define number of blocks
+        blockspergrid = (data_out.size + (threadsperblock - 1)
+                         ) // threadsperblock
+
+        data_out = _util.pytorch2numba(data_out)
+        data_in = _util.pytorch2numba(data_in)
+        value = _util.pytorch2numba(value)
+        index = _util.pytorch2numba(index)
+
+        # run kernel
+        if adjoint_basis is None:
+            _get_interpolate_cuda()[0][blockspergrid, threadsperblock](
+                data_out, data_in, value, index)
+        else:
+            adjoint_basis = _util.pytorch2numba(adjoint_basis)
+            _get_interpolate_lowrank_cuda()[0][blockspergrid, threadsperblock](
+                data_out, data_in, value, index, adjoint_basis)
+            adjoint_basis = _util.numba2pytorch(adjoint_basis)
+
+        data_out = _util.numba2pytorch(data_out)
+        data_in = _util.numba2pytorch(data_in)
+        value = _util.numba2pytorch(value)
+        index = _util.numba2pytorch(index)
+
+    def _do_interpolation_cuda3(data_out, data_in, value, index, adjoint_basis):
+        # define number of blocks
+        blockspergrid = (data_out.size + (threadsperblock - 1)
+                         ) // threadsperblock
+
+        data_out = _util.pytorch2numba(data_out)
+        data_in = _util.pytorch2numba(data_in)
+        value = _util.pytorch2numba(value)
+        index = _util.pytorch2numba(index)
+
+        # run kernel
+        if adjoint_basis is None:
+            _get_interpolate_cuda()[1][blockspergrid, threadsperblock](
+                data_out, data_in, value, index)
+        else:
+            adjoint_basis = _util.pytorch2numba(adjoint_basis)
+            _get_interpolate_lowrank_cuda()[1][blockspergrid, threadsperblock](
+                data_out, data_in, value, index, adjoint_basis)
+            adjoint_basis = _util.numba2pytorch(adjoint_basis)
+
+        data_out = _util.numba2pytorch(data_out)
+        data_in = _util.numba2pytorch(data_in)
+        value = _util.numba2pytorch(value)
+        index = _util.numba2pytorch(index)
+
+    do_interpolation_cuda = [_do_interpolation_cuda2, _do_interpolation_cuda3]
 
     def _get_gridding_cuda(iscomplex):
         """Subroutines for GPU time-domain gridding (non-cartesian -> cartesian)."""
@@ -895,6 +1313,62 @@ if torch.cuda.is_available():
 
         return _gridding2_cuda, _gridding3_cuda
 
+    def _do_gridding_cuda2(data_out, data_in, value, index, basis):
+        is_complex = torch.is_complex(data_in)
+
+        # define number of blocks
+        blockspergrid = (data_out.size + (threadsperblock - 1)
+                         ) // threadsperblock
+
+        data_out = _util.pytorch2numba(data_out)
+        data_in = _util.pytorch2numba(data_in)
+        value = _util.pytorch2numba(value)
+        index = _util.pytorch2numba(index)
+
+        # run kernel
+        if basis is None:
+            _get_gridding_cuda(is_complex)[0][blockspergrid, threadsperblock](
+                data_out, data_in, value, index)
+        else:
+            basis = _util.pytorch2numba(basis)
+            _get_gridding_lowrank_cuda(is_complex)[0][blockspergrid, threadsperblock](
+                data_out, data_in, value, index, basis)
+            basis = _util.numba2pytorch(basis)
+
+        data_out = _util.numba2pytorch(data_out)
+        data_in = _util.numba2pytorch(data_in)
+        value = _util.numba2pytorch(value)
+        index = _util.numba2pytorch(index)
+
+    def _do_gridding_cuda3(data_out, data_in, value, index, basis):
+        is_complex = torch.is_complex(data_in)
+
+        # define number of blocks
+        blockspergrid = (data_out.size + (threadsperblock - 1)
+                         ) // threadsperblock
+
+        data_out = _util.pytorch2numba(data_out)
+        data_in = _util.pytorch2numba(data_in)
+        value = _util.pytorch2numba(value)
+        index = _util.pytorch2numba(index)
+
+        # run kernel
+        if basis is None:
+            _get_gridding_cuda(is_complex)[1][blockspergrid, threadsperblock](
+                data_out, data_in, value, index)
+        else:
+            basis = _util.pytorch2numba(basis)
+            _get_gridding_lowrank_cuda(is_complex)[1][blockspergrid, threadsperblock](
+                data_out, data_in, value, index, basis)
+            basis = _util.numba2pytorch(basis)
+
+        data_out = _util.numba2pytorch(data_out)
+        data_in = _util.numba2pytorch(data_in)
+        value = _util.numba2pytorch(value)
+        index = _util.numba2pytorch(index)
+
+    do_gridding_cuda = [_do_gridding_cuda2, _do_gridding_cuda3]
+
     @nb.cuda.jit(fastmath=True)  # pragma: no cover
     def _interp_selfadjoint_cuda(data_out, toeplitz_matrix, data_in):
 
@@ -909,3 +1383,20 @@ if torch.cuda.is_available():
                 data_out[coeff][batch], toeplitz_matrix[coeff], data_in[coeff][batch])
 
         return data_out
+
+    def do_selfadjoint_interpolation_cuda(data_out, data_in, toeplitz_matrix):
+        # define number of blocks
+        blockspergrid = (data_out.size + (threadsperblock - 1)
+                         ) // threadsperblock
+
+        data_out = _util.pytorch2numba(data_out)
+        data_in = _util.pytorch2numba(data_in)
+        toeplitz_matrix = _util.pytorch2numba(toeplitz_matrix)
+
+        # run kernel
+        _interp_selfadjoint_cuda[blockspergrid, threadsperblock](
+            data_out, toeplitz_matrix, data_in)
+
+        data_out = _util.numba2pytorch(data_out)
+        data_in = _util.numba2pytorch(data_in)
+        toeplitz_matrix = _util.numba2pytorch(toeplitz_matrix)
