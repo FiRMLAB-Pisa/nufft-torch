@@ -90,7 +90,7 @@ def scale_coord(coord: Tensor,
 
 
 def get_oversamp_shape(shape: Union[List[int, ...], Tuple[int, ...]],
-                       oversamp:float,
+                       oversamp: float,
                        ndim: int) -> list:
     """Computes size of oversampled grid for given oversampling factor.
 
@@ -127,7 +127,7 @@ def apodize(data_in: Tensor,
     for axis in range(-ndim, 0):
         i = data_out.shape[axis]
         os_i = np.ceil(oversamp * i)
-        idx = torch.arange( # pylint: disable=no-member
+        idx = torch.arange(  # pylint: disable=no-member
             i, dtype=data_out.dtype)
 
         # Calculate apodization
@@ -136,6 +136,7 @@ def apodize(data_in: Tensor,
         data_out *= apod.reshape([i] + [1] * (-axis - 1))
 
     return data_out
+
 
 def numba2pytorch(array, requires_grad=True):  # pragma: no cover
     """Zero-copy conversion from Numpy/Numba CUDAarray to PyTorch tensor.
@@ -149,11 +150,12 @@ def numba2pytorch(array, requires_grad=True):  # pragma: no cover
     """
     if torch.cuda.is_available() is True:
         if nb.cuda.is_cuda_array(array) is True:
-            tensor = torch.as_tensor(array, device="cuda") # pylint: disable=no-member
+            tensor = torch.as_tensor(  # pylint: disable=no-member
+                array, device="cuda")  # pylint: disable=no-member
         else:
-            tensor = torch.from_numpy(array) # pylint: disable=no-member
+            tensor = torch.from_numpy(array)  # pylint: disable=no-member
     else:
-        tensor = torch.from_numpy(array) # pylint: disable=no-member
+        tensor = torch.from_numpy(array)  # pylint: disable=no-member
 
     tensor.requires_grad = requires_grad
     return tensor.contiguous()
@@ -176,6 +178,7 @@ def pytorch2numba(tensor):  # pragma: no cover
         array = nb.cuda.as_cuda_array(tensor.contiguous())
 
     return array
+
 
 def _expand_shapes(*shapes):
     shapes = [list(shape) for shape in shapes]

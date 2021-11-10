@@ -67,9 +67,11 @@ def prepare_interpolator(coord: Tensor,
 
     for i in range(ndim):
         # kernel value
-        value.append(torch.zeros((npts, width[i]), dtype=torch.float32))
+        value.append(torch.zeros(  # pylint: disable=no-member
+            (npts, width[i]), dtype=torch.float32))  # pylint: disable=no-member
         # kernel index
-        index.append(torch.zeros((npts, width[i]), dtype=torch.uint32))
+        index.append(torch.zeros(  # pylint: disable=no-member
+            (npts, width[i]), dtype=torch.uint32))  # pylint: disable=no-member
 
     # actual precomputation
     for i in range(ndim):
@@ -87,13 +89,12 @@ def prepare_interpolator(coord: Tensor,
     else:
         device_str = device[:4]  # cuda instead of cuda:n
 
-    return {'index': index, 'value': value, 'ndim': ndim, 'device': device_str}
+    return {'index': index, 'value': value, 'shape': shape, 'ndim': ndim, 'device': device_str}
 
 
-def interpolate(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
+def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
     """Interpolation from array to points specified by coordinates.
     Args:
-        data_out (tensor): Preallocated Non-Cartesian array for output.
         data_in (tensor): Input Cartesian array.
         sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
         adjoint_basis (tensor): Adjoint low rank subspace projection operator (subspace to time); can be None.
@@ -104,21 +105,23 @@ def interpolate(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, adjoint_b
     # unpack input
     index = sparse_coeff['index']
     value = sparse_coeff['value']
+    shape = sparse_coeff['shape']
     ndim = sparse_coeff['ndim']
     device = sparse_coeff['device']
 
     # get input sizes
-    nframes, npts = index[0].shape[0], index[0].shape[1]
+    nframes, pts_shape = index[0].shape[0], index[0].shape[1:-1]
+    npts = _util.prod(pts_shape)
 
     # reformat data for computation
-    ibatch_shape = data_in.shape[1:-ndim]
-    ibatch_size = _util.prod(ibatch_shape)  # ncoils * nslices * ...
+    batch_shape = data_in.shape[1:-ndim]
+    batch_size = _util.prod(batch_shape)  # ncoils * nslices * ...
 
-    obatch_shape = data_out.shape[1:-1]
-    obatch_size = _util.prod(obatch_shape)  # ncoils * nslices * ...
+    data_in = data_in.reshape([data_in.shape[0], batch_shape, *shape])
 
-    data_in = data_in.reshape([data_in.shape[0], ibatch_size, *data_in.shape[-ndim:]])
-    data_out = data_out.reshape([nframes, obatch_size, npts])
+    # preallocate output data
+    data_out = torch.zeros((nframes, batch_size, npts),  # pylint: disable=no-member
+                           dtype=data_in.dtype, device=data_in.device)
 
     # do actual interpolation
     if device == 'cpu':
@@ -129,15 +132,14 @@ def interpolate(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, adjoint_b
             data_out, data_in, value, index, adjoint_basis)
 
     # reformat for output
-    data_out = data_out.reshape([nframes, *obatch_shape, npts])
+    data_out = data_out.reshape([nframes, *batch_shape, *pts_shape])
 
     return data_out
 
 
-def gridding(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, basis: Union[None, Tensor]) -> Tensor:
+def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -> Tensor:
     """Gridding of points specified by coordinates to array.
     Args:
-        data_out (tensor): Preallocated Cartesian array for output.
         data_in (tensor): Input Non-Cartesian array.
         sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
         basis (tensor): Low rank subspace projection operator (time to subspace); can be None.
@@ -148,19 +150,30 @@ def gridding(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, basis: Union
     # unpack input
     index = sparse_coeff['index']
     value = sparse_coeff['value']
+    shape = sparse_coeff['shape']
     ndim = sparse_coeff['ndim']
     device = sparse_coeff['device']
 
     # get input sizes
-    nframes, npts = index[0].shape[0], index[0].shape[1]
+    nframes, pts_shape = index[0].shape[0], index[0].shape[1:-1]
+    npts = _util.prod(pts_shape)
+
+    # get number of coefficients
+    if basis is not None:
+        ncoeff = basis.shape[0]
+    else:
+        ncoeff = nframes
 
     # reformat data for computation
-    obatch_shape = data_out.shape[1:-ndim]
-    obatch_size = _util.prod(obatch_shape)  # ncoils * nslices * ...
+    batch_shape = data_in.shape[1:-len(pts_shape)]
+    batch_size = _util.prod(batch_shape)  # ncoils * nslices * ...
 
     # argument reshape
-    data_in = data_in.reshape([nframes, obatch_size, npts])
-    data_out = data_out.reshape([data_out.shape[0], obatch_size, *data_out.shape[-ndim:]])
+    data_in = data_in.reshape([nframes, batch_size, npts])
+
+    # preallocate output data
+    data_out = torch.zeros((ncoeff, batch_size, shape),  # pylint: disable=no-member
+                           dtype=data_in.dtype, device=data_in.device)
 
     # do actual gridding
     if device == 'cpu':
@@ -170,7 +183,7 @@ def gridding(data_out: Tensor, data_in: Tensor, sparse_coeff: Dict, basis: Union
             data_out, data_in, value, index, basis)
 
     # reformat for output
-    data_out = data_out.reshape([data_out.shape[0], *obatch_shape, *data_out.shape[-ndim:]])
+    data_out = data_out.reshape([ncoeff, *batch_shape, *shape])
 
     return data_out
 
@@ -193,8 +206,8 @@ def prepare_toeplitz(coord: Tensor,
         dcf (tensor): k-space sampling density compensation weights.
 
     Returns:
-        st_kernel (array): Fourier transform of system transfer Point Spread Function
-                           (spatiotemporal kernel)
+        st_kernel (tensor): Fourier transform of system transfer Point Spread Function
+                            (spatiotemporal kernel)
     """
     # get dimensions
     ndim = coord.shape[-1]
@@ -202,7 +215,8 @@ def prepare_toeplitz(coord: Tensor,
 
     # if dcf are not provided, assume uniform sampling density
     if dcf is None:
-        dcf = torch.ones(coord.shape[:-1], torch.float32, device=device)
+        dcf = torch.ones(coord.shape[:-1], torch.float32,  # pylint: disable=no-member
+                         device=device)  # pylint: disable=no-member
     else:
         dcf = dcf.to(device)
 
@@ -212,7 +226,7 @@ def prepare_toeplitz(coord: Tensor,
     # if spatio-temporal basis is provided, check reality and offload to device
     if basis is not None:
         islowrank = True
-        isreal = not(torch.is_complex(basis))
+        isreal = not torch.is_complex(basis)  # pylint: disable=no-member
         ncoeff, nframes = basis.shape
         basis = basis.to(device)
         adjoint_basis = basis.conj().T.to(device)
@@ -223,9 +237,9 @@ def prepare_toeplitz(coord: Tensor,
         nframes, ncoeff = coord.shape[0], coord.shape[0]
 
     if isreal:
-        dtype = torch.float32
+        dtype = torch.float32  # pylint: disable=no-member
     else:
-        dtype = torch.complex64
+        dtype = torch.complex64  # pylint: disable=no-member
 
     if basis is not None:
         basis = basis.to(dtype)
@@ -233,43 +247,37 @@ def prepare_toeplitz(coord: Tensor,
 
     if basis is not None:
         # initialize temporary arrays
-        delta = torch.ones((nframes, ncoeff, npts),
-                           dtype=torch.complex64, device=device)
+        delta = torch.ones((nframes, ncoeff, npts),  # pylint: disable=no-member
+                           dtype=torch.complex64, device=device)  # pylint: disable=no-member
         delta = delta * adjoint_basis[:, :, None]
-
-        # preallocate output
-        st_kernel = torch.zeros(
-            [ncoeff, ncoeff, *shape], dtype=torch.complex64, device=device)
 
     else:
         # initialize temporary arrays
-        delta = torch.ones(
-            (nframes, npts), dtype=torch.complex64, device=device)
-
-        # preallocate output
-        st_kernel = torch.zeros([nframes, *shape], dtype=torch.complex64, device=device)
+        delta = torch.ones(  # pylint: disable=no-member
+            (nframes, npts), dtype=torch.complex64, device=device)  # pylint: disable=no-member
 
     # calculate interpolator
     interpolator = prepare_interpolator(coord, shape, width, beta, device)
-    st_kernel = gridding(st_kernel, delta, interpolator, basis)
+    st_kernel = gridding(delta, interpolator, basis)
 
     # keep only real part if basis is real
     if isreal:
         st_kernel = st_kernel.real
 
     # fftshift kernel to accelerate computation
-    st_kernel = torch.fft.ifftshift(st_kernel, dim=list(range(-ndim,0)))
+    st_kernel = torch.fft.ifftshift(st_kernel, dim=list(range(-ndim, 0)))
 
     if basis is not None:
-        st_kernel = st_kernel.reshape([*st_kernel.shape[:2], _util.prod(st_kernel.shape[2:])])
+        st_kernel = st_kernel.reshape(
+            [*st_kernel.shape[:2], _util.prod(st_kernel.shape[2:])])
     else:
         st_kernel = st_kernel[:, None, ...]
 
     # normalize
-    st_kernel /= torch.quantile(st_kernel, 0.95)
+    st_kernel /= torch.quantile(st_kernel, 0.95)  # pylint: disable=no-member
 
     # remove NaN
-    st_kernel = torch.nan_to_num(st_kernel)
+    st_kernel = torch.nan_to_num(st_kernel)  # pylint: disable=no-member
 
     # get device identifier
     if device == 'cpu':
@@ -287,11 +295,12 @@ def toeplitz(data_out, data_in, toeplitz_kernel):
         data_in (tensor): Input tensor of oversampled gridded k-space data.
         st_kernel (dict): Fourier transform of system transfer Point Spread Function
     """
-    if toeplitz_kernel['islowrank' ] is True:
-        if  toeplitz_kernel['device' ] == 'cpu':
+    if toeplitz_kernel['islowrank'] is True:
+        if toeplitz_kernel['device'] == 'cpu':
             do_selfadjoint_interpolation(data_out, data_in, toeplitz_kernel)
         else:
-            do_selfadjoint_interpolation_cuda(data_out, data_in, toeplitz_kernel)
+            do_selfadjoint_interpolation_cuda(
+                data_out, data_in, toeplitz_kernel)
     else:
         data_out = toeplitz_kernel['value'] * data_in
 
@@ -1314,7 +1323,7 @@ if torch.cuda.is_available():
         return _gridding2_cuda, _gridding3_cuda
 
     def _do_gridding_cuda2(data_out, data_in, value, index, basis):
-        is_complex = torch.is_complex(data_in)
+        is_complex = torch.is_complex(data_in)  # pylint: disable=no-member
 
         # define number of blocks
         blockspergrid = (data_out.size + (threadsperblock - 1)
@@ -1341,7 +1350,7 @@ if torch.cuda.is_available():
         index = _util.numba2pytorch(index)
 
     def _do_gridding_cuda3(data_out, data_in, value, index, basis):
-        is_complex = torch.is_complex(data_in)
+        is_complex = torch.is_complex(data_in)  # pylint: disable=no-member
 
         # define number of blocks
         blockspergrid = (data_out.size + (threadsperblock - 1)
@@ -1385,6 +1394,7 @@ if torch.cuda.is_available():
         return data_out
 
     def do_selfadjoint_interpolation_cuda(data_out, data_in, toeplitz_matrix):
+        """ wrapper for CUDA self-adjoint. """
         # define number of blocks
         blockspergrid = (data_out.size + (threadsperblock - 1)
                          ) // threadsperblock
