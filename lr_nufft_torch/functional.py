@@ -28,7 +28,7 @@ from typing import List, Tuple, Dict, Union
 
 from torch import Tensor
 
-from src import _fourier
+from lr_nufft_torch import _fourier
 
 
 def nufft(image: Tensor,

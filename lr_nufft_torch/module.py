@@ -29,7 +29,7 @@ from typing import List, Tuple, Dict, Union
 import torch
 from torch import Tensor
 
-from src import _fourier
+from lr_nufft_torch import _fourier
 
 
 class AbstractNUFFT(torch.nn.Module):  # pylint: disable=abstract-method

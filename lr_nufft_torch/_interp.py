@@ -31,7 +31,7 @@ import numba as nb
 import torch
 from torch import Tensor
 
-from src import _util
+from lr_nufft_torch import _util
 
 # CUDA settings
 threadsperblock = 32

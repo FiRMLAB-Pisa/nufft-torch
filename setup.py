@@ -43,8 +43,8 @@ setuptools.setup(
 
     keywords=["MRI", "model-based", "NUFFT"],
 
-    packages=["lr-torch-nufft"],
-    package_dir={"lrtorchnufft": "src"},
+    packages=["lr_nufft_torch"],
+    package_dir={"lr_nufft_torch": "lr_nufft_torch"},
     python_requires=">=3.6",
 
     install_requires=["numpy"],

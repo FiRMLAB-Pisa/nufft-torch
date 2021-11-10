@@ -32,7 +32,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from src import _util, _interp
+from lr_nufft_torch import _util, _interp
 
 
 def prepare_nufft(coord: Tensor,
