@@ -26,9 +26,9 @@ def prod(shape: Union[List, Tuple]) -> np.int64:
 
 
 def resize(data_in: Tensor,
-           oshape: Union[List[int, ...], Tuple[int, ...]],
-           ishift: Union[List[int, ...], Tuple[int, ...], None] = None,
-           oshift: Union[List[int, ...], Tuple[int, ...], None] = None) -> Tensor:
+           oshape: Union[List[int], Tuple[int]],
+           ishift: Union[List[int], Tuple[int], None] = None,
+           oshift: Union[List[int], Tuple[int], None] = None) -> Tensor:
     """Resize with zero-padding or cropping.
 
     Args:
@@ -66,7 +66,7 @@ def resize(data_in: Tensor,
 
 
 def scale_coord(coord: Tensor,
-                shape: Union[List[int, ...], Tuple[int, ...]],
+                shape: Union[List[int], Tuple[int]],
                 oversamp: float) -> Tensor:
     """Scale coordinates to fit oversampled grid.
 
@@ -89,7 +89,7 @@ def scale_coord(coord: Tensor,
     return output
 
 
-def get_oversamp_shape(shape: Union[List[int, ...], Tuple[int, ...]],
+def get_oversamp_shape(shape: Union[List[int], Tuple[int]],
                        oversamp: float,
                        ndim: int) -> list:
     """Computes size of oversampled grid for given oversampling factor.
@@ -108,8 +108,8 @@ def get_oversamp_shape(shape: Union[List[int, ...], Tuple[int, ...]],
 def apodize(data_in: Tensor,
             ndim: int,
             oversamp: float,
-            width: Union[List[int, ...], Tuple[int, ...]],
-            beta: Union[List[float, ...], Tuple[float, ...]]) -> Tensor:
+            width: Union[List[int], Tuple[int]],
+            beta: Union[List[float], Tuple[float]]) -> Tensor:
     """
     Apodize data in image space to remove effect of kernel convolution.
 

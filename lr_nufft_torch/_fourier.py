@@ -36,9 +36,9 @@ from lr_nufft_torch import _util, _interp
 
 
 def prepare_nufft(coord: Tensor,
-                  shape: Union[int, List[int, ...], Tuple[int, ...]],
-                  oversamp: Union[float, List[float, ...], Tuple[float, ...]] = 1.125,
-                  width: Union[int, List[int, ...], Tuple[int, ...]] = 3,
+                  shape: Union[int, List[int], Tuple[int]],
+                  oversamp: Union[float, List[float], Tuple[float]] = 1.125,
+                  width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
                   device: str = 'cpu') -> Dict:
     """Precompute nufft object for faster t_nufft / t_nufft_adjoint.
@@ -229,9 +229,9 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
 
 
 def prepare_toeplitz(coord: Tensor,
-                     shape: Union[int, List[int, ...], Tuple[int, ...]],
-                     oversamp: Union[float, List[float, ...], Tuple[float, ...]] = 1.125,
-                     width: Union[int, List[int, ...], Tuple[int, ...]] = 3,
+                     shape: Union[int, List[int], Tuple[int]],
+                     oversamp: Union[float, List[float], Tuple[float]] = 1.125,
+                     width: Union[int, List[int], Tuple[int]] = 3,
                      basis: Tensor = None,
                      device: str = 'cpu',
                      dcf: Tensor = None) -> Dict:

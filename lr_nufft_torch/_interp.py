@@ -38,13 +38,13 @@ threadsperblock = 32
 
 
 def prepare_interpolator(coord: Tensor,
-                         shape: Union[List[int, ...], Tuple[int, ...]],
-                         width: Union[List[int, ...], Tuple[int, ...]],
-                         beta: Union[List[float, ...], Tuple[float, ...]],
+                         shape: Union[List[int], Tuple[int]],
+                         width: Union[List[int], Tuple[int]],
+                         beta: Union[List[float], Tuple[float]],
                          device: str) -> Dict:
     """Precompute nufft object for faster t_nufft / t_nufft_adjoint.
     Args:
-        coord (tensor): Coordinate array of shape [nframes, ..., ndim]
+        coord (tensor): Coordinate array of shape [nframes, [int], ndim]
         shape (list or tuple of ints): Overesampled grid size.
         width (list or tuple of int): Interpolation kernel full-width.
         beta (list or tuple of floats): Kaiser-Bessel beta parameter.
@@ -115,7 +115,7 @@ def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, 
 
     # reformat data for computation
     batch_shape = data_in.shape[1:-ndim]
-    batch_size = _util.prod(batch_shape)  # ncoils * nslices * ...
+    batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
 
     data_in = data_in.reshape([data_in.shape[0], batch_shape, *shape])
 
@@ -166,7 +166,7 @@ def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -
 
     # reformat data for computation
     batch_shape = data_in.shape[1:-len(pts_shape)]
-    batch_size = _util.prod(batch_shape)  # ncoils * nslices * ...
+    batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
 
     # argument reshape
     data_in = data_in.reshape([nframes, batch_size, npts])
@@ -189,15 +189,15 @@ def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -
 
 
 def prepare_toeplitz(coord: Tensor,
-                     shape: Union[List[int, ...], Tuple[int, ...]],
-                     width: Union[List[int, ...], Tuple[int, ...]],
-                     beta: Union[List[float, ...], Tuple[float, ...]],
+                     shape: Union[List[int], Tuple[int]],
+                     width: Union[List[int], Tuple[int]],
+                     beta: Union[List[float], Tuple[float]],
                      device: str,
                      basis: Tensor,
                      dcf: Tensor) -> Dict:
     """Compute spatio-temporal kernel for fast self-adjoint operation.
     Args:
-        coord (tensor): Coordinate array of shape [nframes, ..., ndim]
+        coord (tensor): Coordinate array of shape [nframes, [int], ndim]
         shape (list or tuple of ints): Overesampled grid size.
         width (list or tuple of int): Interpolation kernel full-width.
         beta (list or tuple of floats): Kaiser-Bessel beta parameter.
@@ -271,7 +271,7 @@ def prepare_toeplitz(coord: Tensor,
         st_kernel = st_kernel.reshape(
             [*st_kernel.shape[:2], _util.prod(st_kernel.shape[2:])])
     else:
-        st_kernel = st_kernel[:, None, ...]
+        st_kernel = st_kernel[:, None, [int]]
 
     # normalize
     st_kernel /= torch.quantile(st_kernel, 0.95)  # pylint: disable=no-member
@@ -288,7 +288,7 @@ def prepare_toeplitz(coord: Tensor,
     return {'value': st_kernel, 'islowrank': islowrank, 'device': device_str}
 
 
-def toeplitz(data_out, data_in, toeplitz_kernel):
+def toeplitz(data_out: Tensor, data_in: Tensor, toeplitz_kernel: Dict) -> Tensor:
     """Perform in-place fast self-adjoint by multiplication in k-space with spatio-temporal kernel.
     Args:
         data_out (tensor): Output tensor of oversampled gridded k-space data.
