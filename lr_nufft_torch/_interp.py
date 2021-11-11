@@ -34,6 +34,7 @@ from torch import Tensor
 from lr_nufft_torch import _util
 
 # fix this
+from numba import typed
 from numba import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
 import warnings
 
@@ -70,8 +71,8 @@ def prepare_interpolator(coord: Tensor,
     coord = coord.reshape([nframes*npts, ndim]).T
 
     # preallocate interpolator
-    index = []
-    value = []
+    index = typed.List()
+    value = typed.List()
 
     for i in range(ndim):
         # kernel value
@@ -90,7 +91,7 @@ def prepare_interpolator(coord: Tensor,
     for i in range(ndim):
         index[i] = index[i].reshape([nframes, npts, width[i]]).to(device)
         value[i] = value[i].reshape([nframes, npts, width[i]]).to(device)
-        
+
     # get device identifier
     if device == 'cpu':
         device_str = device
@@ -887,20 +888,21 @@ def do_selfadjoint_interpolation(data_out, data_in, toeplitz_matrix):
 
 # %% GPU specific routines
 if torch.cuda.is_available():
+    from numba import cuda
 
-    @nb.cuda.jit(device=True, inline=True)  # pragma: no cover
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _update_real(output, index, value):
-        nb.cuda.atomic.add(        # pylint: disable=too-many-function-args
+        cuda.atomic.add(        # pylint: disable=too-many-function-args
             output, index, value)
 
-    @nb.cuda.jit(device=True, inline=True)  # pragma: no cover
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _update_complex(output, index, value):
-        nb.cuda.atomic.add(                  # pylint: disable=too-many-function-args
+        cuda.atomic.add(                  # pylint: disable=too-many-function-args
             output.real, index, value.real)
-        nb.cuda.atomic.add(                  # pylint: disable=too-many-function-args
+        cuda.atomic.add(                  # pylint: disable=too-many-function-args
             output.imag, index, value.imag)
 
-    @nb.cuda.jit(device=True, inline=True)  # pragma: no cover
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _dot_product_cuda(out, in_a, in_b):
         row, col = in_a.shape
 
@@ -913,7 +915,7 @@ if torch.cuda.is_available():
     def _get_interpolate_cuda():
         """Subroutines for GPU time-domain interpolation (cartesian -> non-cartesian)."""
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _interpolate2_cuda(noncart_data, cart_data, interp_value, interp_index):
 
             # get sizes
@@ -929,7 +931,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -952,7 +954,7 @@ if torch.cuda.is_available():
 
             return noncart_data
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _interpolate3_cuda(noncart_data, cart_data, interp_value, interp_index):
 
             # get sizes
@@ -969,7 +971,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1005,7 +1007,7 @@ if torch.cuda.is_available():
         Transform cartesian low rank -> non-cartesian time domain.
         """
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _interpolate2_cuda(noncart_data, cart_data, interp_value, interp_index, adjoint_basis):
 
             # get sizes
@@ -1022,7 +1024,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1049,7 +1051,7 @@ if torch.cuda.is_available():
 
             return noncart_data
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _interpolate3_cuda(noncart_data, cart_data, interp_value, interp_index, adjoint_basis):
 
             # get sizes
@@ -1067,7 +1069,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1124,7 +1126,7 @@ if torch.cuda.is_available():
         data_in = _util.numba2pytorch(data_in)
         value = [_util.numba2pytorch(val) for val in value]
         index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
-        
+
     def _do_interpolation_cuda3(data_out, data_in, value, index, adjoint_basis):
         # define number of blocks
         blockspergrid = (data_out.size + (threadsperblock - 1)
@@ -1159,7 +1161,7 @@ if torch.cuda.is_available():
         else:
             _update = _update_real
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _gridding2_cuda(cart_data, noncart_data, interp_value, interp_index):
 
             # get sizes
@@ -1175,7 +1177,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1198,7 +1200,7 @@ if torch.cuda.is_available():
 
             return cart_data
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _gridding3_cuda(cart_data, noncart_data, interp_value, interp_index):
 
             # get sizes
@@ -1215,7 +1217,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1251,7 +1253,7 @@ if torch.cuda.is_available():
         else:
             _update = _update_real
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _gridding2_cuda(cart_data, noncart_data, interp_value, interp_index, basis):
 
             # get sizes
@@ -1268,7 +1270,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1294,7 +1296,7 @@ if torch.cuda.is_available():
 
             return cart_data
 
-        @nb.cuda.jit(fastmath=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _gridding3_cuda(cart_data, noncart_data, interp_value, interp_index, basis):
 
             # get sizes
@@ -1312,7 +1314,7 @@ if torch.cuda.is_available():
             xwidth = xindex.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+            i = cuda.grid(1)  # pylint: disable=too-many-function-args
             if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
@@ -1400,12 +1402,12 @@ if torch.cuda.is_available():
 
     do_gridding_cuda = [_do_gridding_cuda2, _do_gridding_cuda3]
 
-    @nb.cuda.jit(fastmath=True)  # pragma: no cover
+    @cuda.jit(fastmath=True)  # pragma: no cover
     def _interp_selfadjoint_cuda(data_out, toeplitz_matrix, data_in):
 
         n_coeff, batch_size, _ = data_in.shape
 
-        i = nb.cuda.grid(1)  # pylint: disable=too-many-function-args
+        i = cuda.grid(1)  # pylint: disable=too-many-function-args
         if i < n_coeff*batch_size:
             coeff = i // batch_size
             batch = i % batch_size
