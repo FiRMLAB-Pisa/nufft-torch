@@ -14,6 +14,13 @@ from torch import Tensor
 
 import torchkbnufft as tkbn
 
+from lr_nufft_torch import _util
+
+import warnings
+
+warnings.simplefilter('ignore', category=FutureWarning)
+warnings.simplefilter('ignore', category=np.VisibleDeprecationWarning)
+
 
 def create_radial_trajectory(ndims: int, matrix_size: int, nreadouts: int, nframes: int) -> Tuple[Tensor, Tensor]:
     """ Generate golden angle (means) 2D (3D projection) radial trajectory
@@ -38,10 +45,22 @@ def create_radial_trajectory(ndims: int, matrix_size: int, nreadouts: int, nfram
     ktraj = ktraj[:, :, None, :]
     ktraj = ktraj.reshape([ktraj.shape[0], nreadouts //
                           nframes, nframes, ktraj.shape[-1]])
-    ktraj = ktraj.transpose(2, 0, 1, -1)
+    ktraj = ktraj.permute(2, 0, 1, -1).to(torch.float32)
     
     # calculate dcf
-    dcf = (ktraj**2).sum(axis=-1)**0.5
+    if ndims == 2:
+        ks = (ktraj**2).sum(axis=-1)**0.5
+        dcf = ks
+        
+    else:
+        ks = (ktraj**2).sum(axis=-1)**0.5
+        k0 = ks.shape[1] // 2
+        dcf0 = 4/3 * np.pi * (ks[:,[k0],:]**3)
+        dcf = 4/3 * np.pi * (ks[:,k0+1:,:]**3 - ks[:,k0:-1,:]**3)
+        dcf = torch.cat((0*dcf0, dcf), dim=1)
+        dcf = torch.cat((torch.flip(dcf, dims=[1]), dcf), dim=1)
+        
+    dcf = dcf[0,:,[0]].to(torch.float32)
 
     return ktraj, dcf
 
@@ -72,7 +91,7 @@ def create_low_rank_subspace_basis(nechoes: int = 1000, ncoeff: int = 4) -> Tupl
     # select subspace
     basis = basis[:ncoeff, :]
 
-    return torch.tensor(basis), torch.tensor(sig)  # pylint: disable=no-member
+    return torch.tensor(basis, dtype=torch.float32), torch.tensor(sig, dtype=torch.float32)  # pylint: disable=no-member
 
 
 def create_shepp_logan_phantom(matrix_shape: Union[List[int], Tuple[int]],
@@ -116,7 +135,7 @@ def create_shepp_logan_phantom(matrix_shape: Union[List[int], Tuple[int]],
     # simulate
     te = np.linspace(1, 300, nechoes)
     sig = np.exp(-te[:, None] / t2[None, :])
-    sig = torch.tensor(sig)  # pylint: disable=no-member
+    sig = torch.tensor(sig, dtype=torch.float32)  # pylint: disable=no-member
 
     # get basis
     basis, _ = create_low_rank_subspace_basis(nechoes, ncoeff)
@@ -124,13 +143,16 @@ def create_shepp_logan_phantom(matrix_shape: Union[List[int], Tuple[int]],
 
     # assign to tissue mask to create output image
     output = torch.zeros((ncoeff, *matrix_shape),  # pylint: disable=no-member
-                         dtype=sig.dtype)
+                         dtype=torch.float32)
 
     for n in range(ncoeff):
         output[n, discrete_model == 1] = sig[n, 0]
         output[n, discrete_model == 2] = sig[n, 1]
         output[n, discrete_model == 3] = sig[n, 2]
 
+    if len(matrix_shape) == 2:
+        output = output.unsqueeze(1)
+        
     return output
 
 
@@ -167,20 +189,20 @@ def plot_kspace_trajectory(ktraj: Tensor):
     ndim = ktraj.shape[-1]
 
     if ndim == 2:
-        plt.plot(ktraj[:40, :, 0, 0], ktraj[:40, :, 0, 1])
-        plt.title('K-Space trajectory')
-        plt.xlabel("kx [a.u.]")
-        plt.ylabel("ky [a.u.]")
+        print(ktraj.shape)
+        plt.plot(ktraj[:40, :, 0, 0].T, ktraj[:40, :, 0, 1].T)
+        plt.title('K-Space trajectory', fontsize=20)
+        plt.xlabel("kx [a.u.]", fontsize=20)
+        plt.ylabel("ky [a.u.]", fontsize=20)
 
     if ndim == 3:
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        ax.plot_surface(ktraj[:40, :, 0, 0],
-                        ktraj[:40, :, 0, 1], ktraj[:40, :, 0, 2])
-        ax.set_title('K-Space trajectory')
-        ax.set_xlabel("kx [a.u.]")
-        ax.set_ylabel("ky [a.u.]")
-        ax.set_zlabel("kz [a.u.]")
+        ax = plt.subplot(111, projection='3d')
+        for n in range(40):
+            ax.plot3D(ktraj[n, :, 0, 0].T, ktraj[n, :, 0, 1].T, ktraj[n, :, 0, 2].T)
+        ax.set_title('K-Space trajectory', fontsize=20)
+        ax.set_xlabel("kx [a.u.]", fontsize=20)
+        ax.set_ylabel("ky [a.u.]", fontsize=20)
+        ax.set_zlabel("kz [a.u.]", fontsize=20)
 
 
 def plot_signal_and_basis(basis: Tensor, signal: Union[None, Tensor] = None):
@@ -195,27 +217,24 @@ def plot_signal_and_basis(basis: Tensor, signal: Union[None, Tensor] = None):
 
     if signal is not None:
         fig, axs = plt.subplots(1, 2)
-        axs[0].plot(nframes, signal.transpose())
-        axs[0].set_title('Signal ensemble')
-        axs[0].axis('off')
-        axs[0].set_xlabel("# frames")
-        axs[0].set_ylabel("signal magnitude [a.u.]")
+        axs[0].plot(torch.arange(nframes), signal.T)
+        axs[0].set_title('Signal ensemble', fontsize=20)
+        axs[0].set_xlabel("# frames", fontsize=20)
+        axs[0].set_ylabel("signal magnitude [a.u.]", fontsize=20)
 
-        axs[1].plot(nframes, basis.transpose())
-        axs[1].set_title('Low-rank subspace basis')
-        axs[1].axis('off')
-        axs[1].set_xlabel("# frames")
-        axs[1].set_ylabel("signal magnitude [a.u.]")
+        axs[1].plot(torch.arange(nframes), basis.T)
+        axs[1].set_title('Low-rank subspace basis', fontsize=20)
+        axs[1].set_xlabel("# frames", fontsize=20)
+        axs[1].set_ylabel("signal magnitude [a.u.]", fontsize=20)
 
     else:
-        plt.plot(nframes, basis.transpose())
-        plt.title('Low-rank subspace basis')
-        plt.axis('off')
-        plt.xlabel("# frames")
-        plt.ylabel("signal magnitude [a.u.]")
+        plt.plot(nframes, basis.T)
+        plt.title('Low-rank subspace basis', fontsize=20)
+        plt.xlabel("# frames", fontsize=20)
+        plt.ylabel("signal magnitude [a.u.]", fontsize=20)
 
 
-def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union[None, Tensor]):
+def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union[Tensor]):
     """ Show image series (i.e. set of singular values).
 
     Args:
@@ -224,19 +243,19 @@ def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union
     if isinstance(image_series, list) or isinstance(image_series, tuple):
         x = []
         for vol in range(len(image_series)):
-            tmp = [torch.flip(image_series[vol][n][slice_idx], dim=-1) / torch.fmax(  # pylint: disable=no-member
+            tmp = [torch.flip(image_series[vol][n][slice_idx], dims=[-1]) / torch.max(  # pylint: disable=no-member
                 torch.abs(image_series[vol][n][slice_idx])) for n in range(image_series[vol].shape[0])]  # pylint: disable=no-member
             tmp = torch.cat(tmp, dim=1)  # pylint: disable=no-member
             x.append(tmp)
-        x = torch.cat(x, axis=0)  # pylint: disable=no-member
+        x = torch.cat(x, dim=0)  # pylint: disable=no-member
 
     else:
-        x = [torch.flip(image_series[n][slice_idx], dim=-1) / torch.abs(image_series[n]  # pylint: disable=no-member
+        x = [torch.flip(image_series[n][slice_idx], dims=[-1]) / torch.abs(image_series[n]  # pylint: disable=no-member
                                                                         [slice_idx]).max() for n in range(image_series.shape[0])]
         x = torch.cat(x, dim=1)  # pylint: disable=no-member
 
     # show
-    plt.imshow(np.abs(x), cmap='gray',
+    plt.imshow(torch.abs(x), cmap='gray',
                interpolation='lanczos'), plt.axis('off')
 
 
@@ -245,14 +264,14 @@ def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union
 
 def _create_2d_radial(matrix_size, nframes):
     # create spoke
-    spokelength = matrix_size[-1] * 2
+    spokelength = matrix_size * 2
     kx = np.linspace(-matrix_size // 2, matrix_size // 2, spokelength)
     ky = 0 * kx
     ktraj = np.stack((kx, ky), axis=0)[:, None, :]
 
     # rotate trajectory
     phi = np.deg2rad(_golden_angle_list(nframes))
-    ktraj = _2d_rotation(ktraj, phi)
+    ktraj = _2d_rotation(ktraj, phi[:,None])
 
     return torch.tensor(ktraj.transpose())  # pylint: disable=no-member
 
@@ -278,17 +297,17 @@ def _2d_rotation(coord_in, phi):
 
 def _create_3d_radial(matrix_size, nframes):
     # create spoke
-    spokelength = matrix_size[-1] * 2
+    spokelength = matrix_size * 2
     kz = np.linspace(-matrix_size // 2, matrix_size // 2, spokelength)
     ky = 0 * kz
     kx = 0 * kz
     ktraj = np.stack((kx, ky, kz), axis=0)[:, None, :]
 
     # rotate trajectory
-    phi, theta = _golden_angle_list(nframes)
+    phi, theta = _golden_means_list(nframes)
     phi, theta = np.deg2rad(phi), np.deg2rad(theta)
 
-    ktraj = _3d_rotation(ktraj, phi, theta)
+    ktraj = _3d_rotation(ktraj, phi[:,None], theta[:,None])
 
     return torch.tensor(ktraj.transpose())  # pylint: disable=no-member
 
@@ -327,12 +346,16 @@ def _prepare_trajectory_for_torchkbnufft(ktraj):
     ktraj = ktraj.clone()
 
     # rescale to -pi:pi
-    ktraj = ktraj / kabs.max() / 2 * np.pi
+    ktraj = ktraj / kabs.max() * np.pi
+    
+    # reshape
+    ktraj = ktraj.reshape((_util.prod(ktraj.shape[:-1]), ktraj.shape[-1]))
+    ktraj = ktraj.T
 
     return ktraj
 
 
-def tkbnufft_factory(ktraj, im_size, oversamp, width):
+def tkbnufft_factory(ktraj, im_size, oversamp=1.125, width=3):
     """Prepare NUFFT operator using torchkbnufft."""
     # adapt trajectory
     ktraj = _prepare_trajectory_for_torchkbnufft(ktraj)
@@ -347,7 +370,7 @@ def tkbnufft_factory(ktraj, im_size, oversamp, width):
     return nufft
 
 
-def tkbnufft_adjoint_factory(ktraj, im_size, oversamp, width):
+def tkbnufft_adjoint_factory(ktraj, im_size, oversamp=1.125, width=3):
     """Prepare NUFFT Adjoint operator using torchkbnufft."""
     # adapt trajectory
     ktraj = _prepare_trajectory_for_torchkbnufft(ktraj)

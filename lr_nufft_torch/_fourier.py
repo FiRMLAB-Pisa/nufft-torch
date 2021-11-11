@@ -56,21 +56,21 @@ def prepare_nufft(coord: Tensor,
     ndim = coord.shape[-1]
 
     if np.isscalar(width):
-        width = torch.tensor(  # pylint: disable=no-member
-            [width] * ndim, dtype=torch.int)  # pylint: disable=no-member
+        width = np.array(  # pylint: disable=no-member
+            [width] * ndim, dtype=np.int16)  # pylint: disable=no-member
     else:
-        width = torch.tensor(  # pylint: disable=no-member
-            width, dtype=torch.int)  # pylint: disable=no-member
+        width = np.array(  # pylint: disable=no-member
+            width, dtype=np.int16)  # pylint: disable=no-member
 
     # calculate Kaiser-Bessel beta parameter
     beta = np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
 
     if np.isscalar(shape):
-        shape = torch.tensor(  # pylint: disable=no-member
-            [shape] * ndim, dtype=torch.int)  # pylint: disable=no-member
+        shape = np.array(  # pylint: disable=no-member
+            [shape] * ndim, dtype=np.int16)  # pylint: disable=no-member
     else:
-        shape = torch.tensor(  # pylint: disable=no-member
-            shape, dtype=torch.int)  # pylint: disable=no-member
+        shape = np.array(  # pylint: disable=no-member
+            shape, dtype=np.int16)  # pylint: disable=no-member
 
     os_shape = _util.get_oversamp_shape(shape, oversamp, ndim)
 
@@ -150,13 +150,13 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
 
     # Zero-pad
     image /= _util.prod(image.shape[-ndim:])**0.5
-    image = _util.resize(image, os_shape)
+    image = _util.resize(image, list(image.shape[:-ndim]) + os_shape)
 
     # FFT
     kdata = fft(image, axes=range(-ndim, 0), norm=None)
 
     # Interpolate
-    kdata = _interp.interpolate(image, sparse_coeff, adjoint_basis)
+    kdata = _interp.interpolate(kdata, sparse_coeff, adjoint_basis)
     kdata /= _util.prod(width)
 
     # Bring back to original device
@@ -215,7 +215,7 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     image = ifft(kdata, axes=range(-ndim, 0), norm=None)
 
     # Crop
-    image = _util.resize(image, oshape)
+    image = _util.resize(image, list(image.shape[:-ndim]) + oshape.tolist())
     image *= _util.prod(os_shape[-ndim:]) / _util.prod(oshape[-ndim:])**0.5
 
     # Apodize
@@ -259,21 +259,21 @@ def prepare_toeplitz(coord: Tensor,
     coord = coord.reshape([nframes, npts, ndim])
 
     if np.isscalar(width):
-        width = torch.tensor(  # pylint: disable=no-member
-            [width] * ndim, dtype=torch.int)  # pylint: disable=no-member
+        width = np.array(  # pylint: disable=no-member
+            [width] * ndim, dtype=np.int16)  # pylint: disable=no-member
     else:
-        width = torch.tensor(  # pylint: disable=no-member
-            width, dtype=torch.int)  # pylint: disable=no-member
+        width = np.array(  # pylint: disable=no-member
+            width, dtype=np.int16)  # pylint: disable=no-member
 
     # calculate Kaiser-Bessel beta parameter
     beta = np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
 
     if np.isscalar(shape):
-        shape = torch.tensor(  # pylint: disable=no-member
-            [shape] * ndim, dtype=torch.int)  # pylint: disable=no-member
+        shape = np.array(  # pylint: disable=no-member
+            [shape] * ndim, dtype=np.int16)  # pylint: disable=no-member
     else:
-        shape = torch.tensor(  # pylint: disable=no-member
-            shape, dtype=torch.int)  # pylint: disable=no-member
+        shape = np.array(  # pylint: disable=no-member
+            shape, dtype=np.int16)  # pylint: disable=no-member
 
     # get oversampled grid
     os_shape = _util.get_oversamp_shape(shape, oversamp, ndim)
@@ -322,7 +322,7 @@ def nufft_selfadjoint(image: Tensor, toeplitz: Dict) -> Tensor:
         [ishape[0], _util.prod(ishape[1:-ndim]), *ishape[-ndim:]])
 
     # Get oversampled shape
-    shape = list(input.shape)
+    shape = list(image.shape)
     os_shape = _util.get_oversamp_shape(shape, oversamp, ndim)
 
     # Zero-pad
@@ -352,7 +352,7 @@ def nufft_selfadjoint(image: Tensor, toeplitz: Dict) -> Tensor:
 
     # Crop
     image = _util.resize(image, shape)
-    image = data_out.reshape(ishape)
+    image = image.reshape(ishape)
 
     if islowrank is True:
         image = image[:, 0]
@@ -387,7 +387,7 @@ def fft(data_in, oshape=None, axes=None, center=True, norm='ortho'):
     if center:
         data_out = _fftc(data_in, oshape=oshape, axes=axes, norm=norm)
     else:
-        data_out = torch.fft.fftn(data_in, n=oshape, dim=axes, norm=norm)
+        data_out = torch.fft.fftn(data_in, s=oshape, dim=axes, norm=norm)
 
     if torch.is_complex(data_in) and data_in.dtype != data_out.dtype:  # pylint: disable=no-member
         data_out = data_out.to(data_in.dtype, copy=False)
@@ -420,7 +420,7 @@ def ifft(data_in, oshape=None, axes=None, center=True, norm='ortho'):
     if center:
         data_out = _fftc(data_in, oshape=oshape, axes=axes, norm=norm)
     else:
-        data_out = torch.fft.ifftn(data_in, n=oshape, dim=axes, norm=norm)
+        data_out = torch.fft.ifftn(data_in, s=oshape, dim=axes, norm=norm)
 
     if torch.is_complex(data_in) and data_in.dtype != data_out.dtype:  # pylint: disable=no-member
         data_out = data_out.to(data_in.dtype, copy=False)

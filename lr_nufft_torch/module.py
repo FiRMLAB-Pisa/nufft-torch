@@ -39,9 +39,9 @@ class AbstractNUFFT(torch.nn.Module):  # pylint: disable=abstract-method
 
     def __init__(self,
                  coord: Union[None, Tensor] = None,
-                 shape: Union[None, int, List[int, ...], Tuple[int, ...]] = None,
-                 oversamp: Union[float, List[float, ...], Tuple[float, ...]] = 1.125,
-                 width: Union[int, List[int, ...], Tuple[int, ...]] = 3,
+                 shape: Union[None, int, List[int], Tuple[int]] = None,
+                 oversamp: Union[float, List[float], Tuple[float]] = 1.125,
+                 width: Union[int, List[int], Tuple[int]] = 3,
                  basis: Union[None, Tensor] = None,
                  device: str = 'cpu',
                  interpolator: Union[None, Dict] = None):
@@ -75,7 +75,7 @@ class NUFFT(AbstractNUFFT):
     """ Non-Uniform Fourier Transform operator with embedded low-rank projection."""
 
     def forward(self, image):  # pylint: disable=missing-function-docstring
-        return _NUFFT(image, self.interpolator)
+        return _NUFFT.apply(image, self.interpolator)
 
     @property
     def H(self):
@@ -98,7 +98,7 @@ class NUFFTAdjoint(AbstractNUFFT):
     """ Adjoint Non-Uniform Fourier Transform operator with embedded low-rank projection."""
 
     def forward(self, kdata):  # pylint: disable=missing-function-docstring
-        return _NUFFTAdjoint(kdata, self.interpolator)
+        return _NUFFTAdjoint.apply(kdata, self.interpolator)
 
     @property
     def H(self):
@@ -121,9 +121,9 @@ class NUFFTSelfadjoint(torch.nn.Module):
 
     def __init__(self,
                  coord: Union[None, Tensor] = None,
-                 shape: Union[None, int, List[int, ...], Tuple[int, ...]] = None,
-                 oversamp: Union[float, List[float, ...], Tuple[float, ...]] = 1.125,
-                 width: Union[int, List[int, ...], Tuple[int, ...]] = 3,
+                 shape: Union[None, int, List[int], Tuple[int]] = None,
+                 oversamp: Union[float, List[float], Tuple[float]] = 1.125,
+                 width: Union[int, List[int], Tuple[int]] = 3,
                  device: str = 'cpu',
                  basis: Tensor = None,
                  dcf: Tensor = None,
@@ -143,4 +143,4 @@ class NUFFTSelfadjoint(torch.nn.Module):
         return self
 
     def forward(self, image):  # pylint: disable=missing-function-docstring
-        return _NUFFTSelfadjoint(image, self.toeplitz)
+        return _NUFFTSelfadjoint.apply(image, self.toeplitz)

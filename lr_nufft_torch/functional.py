@@ -33,8 +33,8 @@ from lr_nufft_torch import _fourier
 
 def nufft(image: Tensor,
           coord: Tensor,
-          oversamp: Union[float, List[float, ...], Tuple[float, ...]] = 1.125,
-          width: Union[int, List[int, ...], Tuple[int, ...]] = 3,
+          oversamp: Union[float, List[float], Tuple[float]] = 1.125,
+          width: Union[int, List[int], Tuple[int]] = 3,
           basis: Union[None, Tensor] = None,
           device: str = 'cpu') -> Dict:
     """Non-uniform Fast Fourier Transform.
@@ -78,9 +78,9 @@ def nufft(image: Tensor,
 
 def nufft_adjoint(kdata: Tensor,
                   coord: Tensor,
-                  shape: Union[int, List[int, ...], Tuple[int, ...]],
-                  oversamp: Union[float, List[float, ...], Tuple[float, ...]] = 1.125,
-                  width: Union[int, List[int, ...], Tuple[int, ...]] = 3,
+                  shape: Union[int, List[int], Tuple[int]],
+                  oversamp: Union[float, List[float], Tuple[float]] = 1.125,
+                  width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
                   device: str = 'cpu') -> Dict:
     """Adjoint Non-uniform Fast Fourier Transform.

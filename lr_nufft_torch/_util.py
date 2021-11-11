@@ -40,7 +40,6 @@ def resize(data_in: Tensor,
     Returns:
         tensor: Zero-padded or cropped result.
     """
-
     ishape1, oshape1 = _expand_shapes(data_in.shape, oshape)
 
     if ishape1 == oshape1:
@@ -59,8 +58,8 @@ def resize(data_in: Tensor,
 
     data_out = torch.zeros(  # pylint: disable=no-member
         oshape1, dtype=data_in.dtype)
-    data_out = data_out.reshape(ishape1)
-    data_out[oslice] = data_out[islice]
+    data_in = data_in.reshape(ishape1)
+    data_out[oslice] = data_in[islice]
 
     return data_out.reshape(oshape)
 
@@ -77,6 +76,7 @@ def scale_coord(coord: Tensor,
 
     Returns:
         tensor: Scaled coordinates of shape [nframes, ..., ndim]
+        
     """
     ndim = coord.shape[-1]
     output = coord.clone()
@@ -91,7 +91,7 @@ def scale_coord(coord: Tensor,
 
 def get_oversamp_shape(shape: Union[List[int], Tuple[int]],
                        oversamp: float,
-                       ndim: int) -> list:
+                       ndim: int) -> List[int]:
     """Computes size of oversampled grid for given oversampling factor.
 
     Args:
@@ -102,7 +102,7 @@ def get_oversamp_shape(shape: Union[List[int], Tuple[int]],
     Returns:
         list: shape of oversampled grid.
     """
-    return list(shape)[:-ndim] + [np.ceil(oversamp * i) for i in shape[-ndim:]]
+    return list(shape)[:-ndim] + [np.ceil(oversamp * i).astype(np.int16) for i in shape[-ndim:]]
 
 
 def apodize(data_in: Tensor,
@@ -128,10 +128,10 @@ def apodize(data_in: Tensor,
         i = data_out.shape[axis]
         os_i = np.ceil(oversamp * i)
         idx = torch.arange(  # pylint: disable=no-member
-            i, dtype=data_out.dtype)
+            i, dtype=torch.float32)
 
         # Calculate apodization
-        apod = (beta**2 - (np.pi * width * (idx - i // 2) / os_i)**2)**0.5
+        apod = (beta[axis]**2 - (np.pi * width[axis] * (idx - i // 2) / os_i)**2)**0.5
         apod /= torch.sinh(apod)  # pylint: disable=no-member
         data_out *= apod.reshape([i] + [1] * (-axis - 1))
 

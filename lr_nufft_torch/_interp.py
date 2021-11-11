@@ -33,6 +33,13 @@ from torch import Tensor
 
 from lr_nufft_torch import _util
 
+# fix this
+from numba import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
+import warnings
+
+warnings.simplefilter('ignore', category=NumbaDeprecationWarning)
+warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
+
 # CUDA settings
 threadsperblock = 32
 
@@ -55,11 +62,12 @@ def prepare_interpolator(coord: Tensor,
     """
     # parse input sizes
     ndim = coord.shape[-1]
-    pts_shape = coord.shape[:-1]
+    nframes = coord.shape[0]
+    pts_shape = coord.shape[1:-1]
     npts = _util.prod(pts_shape)
 
     # arg reshape
-    coord = coord.reshape([npts, ndim]).transpose()
+    coord = coord.reshape([nframes*npts, ndim]).T
 
     # preallocate interpolator
     index = []
@@ -68,28 +76,28 @@ def prepare_interpolator(coord: Tensor,
     for i in range(ndim):
         # kernel value
         value.append(torch.zeros(  # pylint: disable=no-member
-            (npts, width[i]), dtype=torch.float32))  # pylint: disable=no-member
+            (nframes*npts, width[i]), dtype=torch.float32))  # pylint: disable=no-member
         # kernel index
         index.append(torch.zeros(  # pylint: disable=no-member
-            (npts, width[i]), dtype=torch.uint32))  # pylint: disable=no-member
+            (nframes*npts, width[i]), dtype=torch.int32))  # pylint: disable=no-member
 
     # actual precomputation
     for i in range(ndim):
-        _prepare_interpolator(value[i], index[i],
-                              coord[i], width[i], beta[i], shape[i])
+        _do_prepare_interpolator(value[i], index[i],
+                                 coord[i], width[i], beta[i], shape[i])
 
     # reformat for output
     for i in range(ndim):
-        index[i] = index[i].reshape([*pts_shape, width[i]]).to(device)
-        value[i] = value[i].reshape([*pts_shape, width[i]]).to(device)
-
+        index[i] = index[i].reshape([nframes, npts, width[i]]).to(device)
+        value[i] = value[i].reshape([nframes, npts, width[i]]).to(device)
+        
     # get device identifier
     if device == 'cpu':
         device_str = device
     else:
         device_str = device[:4]  # cuda instead of cuda:n
 
-    return {'index': index, 'value': value, 'shape': shape, 'ndim': ndim, 'device': device_str}
+    return {'index': index, 'value': value, 'shape': shape, 'pts_shape': pts_shape, 'ndim': ndim, 'device': device_str}
 
 
 def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
@@ -106,18 +114,19 @@ def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, 
     index = sparse_coeff['index']
     value = sparse_coeff['value']
     shape = sparse_coeff['shape']
+    pts_shape = sparse_coeff['pts_shape']
     ndim = sparse_coeff['ndim']
     device = sparse_coeff['device']
 
     # get input sizes
-    nframes, pts_shape = index[0].shape[0], index[0].shape[1:-1]
+    nframes = index[0].shape[0]
     npts = _util.prod(pts_shape)
 
     # reformat data for computation
     batch_shape = data_in.shape[1:-ndim]
     batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
 
-    data_in = data_in.reshape([data_in.shape[0], batch_shape, *shape])
+    data_in = data_in.reshape([data_in.shape[0], batch_size, *shape])
 
     # preallocate output data
     data_out = torch.zeros((nframes, batch_size, npts),  # pylint: disable=no-member
@@ -125,10 +134,10 @@ def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, 
 
     # do actual interpolation
     if device == 'cpu':
-        do_interpolation[ndim-1](data_out, data_in,
+        do_interpolation[ndim-2](data_out, data_in,
                                  value, index, adjoint_basis)
     else:
-        do_interpolation_cuda[ndim-1](
+        do_interpolation_cuda[ndim-2](
             data_out, data_in, value, index, adjoint_basis)
 
     # reformat for output
@@ -151,11 +160,12 @@ def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -
     index = sparse_coeff['index']
     value = sparse_coeff['value']
     shape = sparse_coeff['shape']
+    pts_shape = sparse_coeff['pts_shape']
     ndim = sparse_coeff['ndim']
     device = sparse_coeff['device']
 
     # get input sizes
-    nframes, pts_shape = index[0].shape[0], index[0].shape[1:-1]
+    nframes = index[0].shape[0]
     npts = _util.prod(pts_shape)
 
     # get number of coefficients
@@ -172,14 +182,14 @@ def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -
     data_in = data_in.reshape([nframes, batch_size, npts])
 
     # preallocate output data
-    data_out = torch.zeros((ncoeff, batch_size, shape),  # pylint: disable=no-member
+    data_out = torch.zeros((ncoeff, batch_size, *shape),  # pylint: disable=no-member
                            dtype=data_in.dtype, device=data_in.device)
 
     # do actual gridding
     if device == 'cpu':
-        do_gridding[ndim-1](data_out, data_in, value, index, basis)
+        do_gridding[ndim-2](data_out, data_in, value, index, basis)
     else:
-        do_gridding_cuda[ndim-1](
+        do_gridding_cuda[ndim-2](
             data_out, data_in, value, index, basis)
 
     # reformat for output
@@ -297,10 +307,10 @@ def toeplitz(data_out: Tensor, data_in: Tensor, toeplitz_kernel: Dict) -> Tensor
     """
     if toeplitz_kernel['islowrank'] is True:
         if toeplitz_kernel['device'] == 'cpu':
-            do_selfadjoint_interpolation(data_out, data_in, toeplitz_kernel)
+            do_selfadjoint_interpolation(data_out, data_in, toeplitz_kernel['value'])
         else:
             do_selfadjoint_interpolation_cuda(
-                data_out, data_in, toeplitz_kernel)
+                data_out, data_in, toeplitz_kernel['value'])
     else:
         data_out = toeplitz_kernel['value'] * data_in
 
@@ -366,6 +376,18 @@ def _get_prepare_interpolator():
 
 _prepare_interpolator = _get_prepare_interpolator()
 
+def _do_prepare_interpolator(interp_value, interp_index, coord, kernel_width, kernel_param, grid_shape):
+    """ Preparation routine wrapper. """
+    interp_value = _util.pytorch2numba(interp_value)
+    interp_index = _util.pytorch2numba(interp_index)
+    coord = _util.pytorch2numba(coord)
+
+    _prepare_interpolator(interp_value, interp_index, coord, kernel_width, kernel_param, grid_shape)
+
+    interp_value = _util.numba2pytorch(interp_value)
+    interp_index = _util.numba2pytorch(interp_index, requires_grad=False)
+    coord = _util.numba2pytorch(coord)
+
 
 def _get_interpolate():
     """Subroutines for CPU time-domain interpolation (cartesian -> non-cartesian)."""
@@ -391,8 +413,8 @@ def _get_interpolate():
             # get current frame and k-space index
             frame = i // (batch_size*npts)
             tmp = i % (batch_size*npts)
-            batch = tmp // batch_size
-            point = tmp % batch_size
+            batch = tmp // npts
+            point = tmp % npts
 
             # gather data within kernel radius
             for i_y in range(ywidth):
@@ -430,8 +452,8 @@ def _get_interpolate():
             # get current frame and k-space index
             frame = i // (batch_size*npts)
             tmp = i % (batch_size*npts)
-            batch = tmp // batch_size
-            point = tmp % batch_size
+            batch = tmp // npts
+            point = tmp % npts
 
             # gather data within kernel radius
             for i_z in range(zwidth):
@@ -483,8 +505,8 @@ def _get_interpolate_lowrank():
             # get current frame and k-space index
             frame = i // (batch_size*npts)
             tmp = i % (batch_size*npts)
-            batch = tmp // batch_size
-            point = tmp % batch_size
+            batch = tmp // npts
+            point = tmp % npts
 
             # gather data within kernel radius
             for i_y in range(ywidth):
@@ -527,8 +549,8 @@ def _get_interpolate_lowrank():
             # get current frame and k-space index
             frame = i // (batch_size*npts)
             tmp = i % (batch_size*npts)
-            batch = tmp // batch_size
-            point = tmp % batch_size
+            batch = tmp // npts
+            point = tmp % npts
 
             # gather data within kernel radius
             for i_z in range(zwidth):
@@ -559,8 +581,8 @@ def _do_interpolation2(data_out, data_in, value, index, adjoint_basis):
     """ 2D Interpolation routine wrapper. """
     data_out = _util.pytorch2numba(data_out)
     data_in = _util.pytorch2numba(data_in)
-    value = _util.pytorch2numba(value)
-    index = _util.pytorch2numba(index)
+    value = [_util.pytorch2numba(val) for val in value]
+    index = [_util.pytorch2numba(ind) for ind in index]
 
     if adjoint_basis is None:
         _get_interpolate()[0](data_out, data_in, value, index)
@@ -572,16 +594,16 @@ def _do_interpolation2(data_out, data_in, value, index, adjoint_basis):
 
     data_out = _util.numba2pytorch(data_out)
     data_in = _util.numba2pytorch(data_in)
-    value = _util.numba2pytorch(value)
-    index = _util.numba2pytorch(index)
+    value = [_util.numba2pytorch(val) for val in value]
+    index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
 
 def _do_interpolation3(data_out, data_in, value, index, adjoint_basis):
     """ 3D Interpolation routine wrapper. """
     data_out = _util.pytorch2numba(data_out)
     data_in = _util.pytorch2numba(data_in)
-    value = _util.pytorch2numba(value)
-    index = _util.pytorch2numba(index)
+    value = [_util.pytorch2numba(val) for val in value]
+    index = [_util.pytorch2numba(ind) for ind in index]
 
     if adjoint_basis is None:
         _get_interpolate()[1](data_out, data_in, value, index)
@@ -593,8 +615,8 @@ def _do_interpolation3(data_out, data_in, value, index, adjoint_basis):
 
     data_out = _util.numba2pytorch(data_out)
     data_in = _util.numba2pytorch(data_in)
-    value = _util.numba2pytorch(value)
-    index = _util.numba2pytorch(index)
+    value = [_util.numba2pytorch(val) for val in value]
+    index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
 
 do_interpolation = [_do_interpolation2, _do_interpolation3]
@@ -796,8 +818,8 @@ def _do_gridding2(data_out, data_in, value, index, basis):
     """ 2D Gridding routine wrapper. """
     data_out = _util.pytorch2numba(data_out)
     data_in = _util.pytorch2numba(data_in)
-    value = _util.pytorch2numba(value)
-    index = _util.pytorch2numba(index)
+    value = [_util.pytorch2numba(val) for val in value]
+    index = [_util.pytorch2numba(ind) for ind in index]
 
     if basis is None:
         _get_gridding()[0](data_out, data_in, value, index)
@@ -808,16 +830,16 @@ def _do_gridding2(data_out, data_in, value, index, basis):
 
     data_out = _util.numba2pytorch(data_out)
     data_in = _util.numba2pytorch(data_in)
-    value = _util.numba2pytorch(value)
-    index = _util.numba2pytorch(index)
+    value = [_util.numba2pytorch(val) for val in value]
+    index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
 
 def _do_gridding3(data_out, data_in, value, index, basis):
     """ 3D Gridding routine wrapper. """
     data_out = _util.pytorch2numba(data_out)
     data_in = _util.pytorch2numba(data_in)
-    value = _util.pytorch2numba(value)
-    index = _util.pytorch2numba(index)
+    value = [_util.pytorch2numba(val) for val in value]
+    index = [_util.pytorch2numba(ind) for ind in index]
 
     if basis is None:
         _get_gridding()[1](data_out, data_in, value, index)
@@ -828,8 +850,8 @@ def _do_gridding3(data_out, data_in, value, index, basis):
 
     data_out = _util.numba2pytorch(data_out)
     data_in = _util.numba2pytorch(data_in)
-    value = _util.numba2pytorch(value)
-    index = _util.numba2pytorch(index)
+    value = [_util.numba2pytorch(val) for val in value]
+    index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
 
 do_gridding = [_do_gridding2, _do_gridding3]
@@ -913,8 +935,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # gather data within kernel radius
                 for i_y in range(ywidth):
@@ -953,8 +975,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # gather data within kernel radius
                 for i_z in range(zwidth):
@@ -1006,8 +1028,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # gather data within kernel radius
                 for i_y in range(ywidth):
@@ -1051,8 +1073,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # gather data within kernel radius
                 for i_z in range(zwidth):
@@ -1085,8 +1107,8 @@ if torch.cuda.is_available():
 
         data_out = _util.pytorch2numba(data_out)
         data_in = _util.pytorch2numba(data_in)
-        value = _util.pytorch2numba(value)
-        index = _util.pytorch2numba(index)
+        value = [_util.pytorch2numba(val) for val in value]
+        index = [_util.pytorch2numba(ind) for ind in index]
 
         # run kernel
         if adjoint_basis is None:
@@ -1100,9 +1122,9 @@ if torch.cuda.is_available():
 
         data_out = _util.numba2pytorch(data_out)
         data_in = _util.numba2pytorch(data_in)
-        value = _util.numba2pytorch(value)
-        index = _util.numba2pytorch(index)
-
+        value = [_util.numba2pytorch(val) for val in value]
+        index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
+        
     def _do_interpolation_cuda3(data_out, data_in, value, index, adjoint_basis):
         # define number of blocks
         blockspergrid = (data_out.size + (threadsperblock - 1)
@@ -1110,8 +1132,8 @@ if torch.cuda.is_available():
 
         data_out = _util.pytorch2numba(data_out)
         data_in = _util.pytorch2numba(data_in)
-        value = _util.pytorch2numba(value)
-        index = _util.pytorch2numba(index)
+        value = [_util.pytorch2numba(val) for val in value]
+        index = [_util.pytorch2numba(ind) for ind in index]
 
         # run kernel
         if adjoint_basis is None:
@@ -1125,8 +1147,8 @@ if torch.cuda.is_available():
 
         data_out = _util.numba2pytorch(data_out)
         data_in = _util.numba2pytorch(data_in)
-        value = _util.numba2pytorch(value)
-        index = _util.numba2pytorch(index)
+        value = [_util.numba2pytorch(val) for val in value]
+        index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
     do_interpolation_cuda = [_do_interpolation_cuda2, _do_interpolation_cuda3]
 
@@ -1159,8 +1181,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # spread data within kernel radius
                 for i_y in range(ywidth):
@@ -1199,8 +1221,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # spread data within kernel radius
                 for i_z in range(zwidth):
@@ -1252,8 +1274,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # spread data within kernel radius
                 for i_y in range(ywidth):
@@ -1296,8 +1318,8 @@ if torch.cuda.is_available():
                 # get current frame and k-space index
                 frame = i // (batch_size*npts)
                 tmp = i % (batch_size*npts)
-                batch = tmp // batch_size
-                point = tmp % batch_size
+                batch = tmp // npts
+                point = tmp % npts
 
                 # spread data within kernel radius
                 for i_z in range(zwidth):
@@ -1331,8 +1353,8 @@ if torch.cuda.is_available():
 
         data_out = _util.pytorch2numba(data_out)
         data_in = _util.pytorch2numba(data_in)
-        value = _util.pytorch2numba(value)
-        index = _util.pytorch2numba(index)
+        value = [_util.pytorch2numba(val) for val in value]
+        index = [_util.pytorch2numba(ind) for ind in index]
 
         # run kernel
         if basis is None:
@@ -1346,8 +1368,8 @@ if torch.cuda.is_available():
 
         data_out = _util.numba2pytorch(data_out)
         data_in = _util.numba2pytorch(data_in)
-        value = _util.numba2pytorch(value)
-        index = _util.numba2pytorch(index)
+        value = [_util.numba2pytorch(val) for val in value]
+        index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
     def _do_gridding_cuda3(data_out, data_in, value, index, basis):
         is_complex = torch.is_complex(data_in)  # pylint: disable=no-member
@@ -1358,8 +1380,8 @@ if torch.cuda.is_available():
 
         data_out = _util.pytorch2numba(data_out)
         data_in = _util.pytorch2numba(data_in)
-        value = _util.pytorch2numba(value)
-        index = _util.pytorch2numba(index)
+        value = [_util.pytorch2numba(val) for val in value]
+        index = [_util.pytorch2numba(ind) for ind in index]
 
         # run kernel
         if basis is None:
@@ -1373,8 +1395,8 @@ if torch.cuda.is_available():
 
         data_out = _util.numba2pytorch(data_out)
         data_in = _util.numba2pytorch(data_in)
-        value = _util.numba2pytorch(value)
-        index = _util.numba2pytorch(index)
+        value = [_util.numba2pytorch(val) for val in value]
+        index = [_util.numba2pytorch(ind, requires_grad=False) for ind in index]
 
     do_gridding_cuda = [_do_gridding_cuda2, _do_gridding_cuda3]
 
