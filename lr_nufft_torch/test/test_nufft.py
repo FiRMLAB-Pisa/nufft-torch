@@ -1,444 +1,152 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Dec 31 10:43:40 2020
+"""Unit tests for forward NUFFT."""
+# pylint: disable=missing-function-docstring
+# pylint: disable=line-too-long
+# pylint: disable=too-many-arguments
+# pylint: disable=unused-argument
 
-@author: mcencini
-"""
 import pytest
+
 
 from torch import testing as tt
 
+
 from lr_nufft_torch import functional
 
-from conftest import (get_params_2d_nufft,
-                      get_params_3d_nufft,
-                      get_params_2d_nufft_lowrank,
-                      get_params_3d_nufft_lowrank)
 
-# %% testing kernel width
+from conftest import _get_noncartesian_params
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_2d_nufft())
-def test_2d_nufft(device, img, kdata, wave, basis, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
+def test_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
     # computation
-    result = functional.nufft(input, coord=coord, device=device)
+    result = functional.nufft(data_in, coord=coord, device=device)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_3d_nufft())
-def test_3d_nufft(device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave, basis", _get_noncartesian_params(lowrank=True))
+def test_nufft_lowrank(ndim, device, img, kdata, wave, basis, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
     # computation
-    result = functional.nufft(input, coord=coord, device=device)
+    result = functional.nufft(data_in, coord=coord, device=device, basis=basis)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_2d_nufft())
-def test_even_width_2d_nufft(device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
+def test_even_width_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
+    # kernel width
+    width = 4
+
     # computation
-    result = functional.nufft(input, coord=coord, width=4, device=device)
+    result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_2d_nufft())
-def test_even_width_explicit_2d_nufft(device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
+def test_even_width_explicit_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
+    # kernel width
+    width = tuple([4] * ndim)
+
     # computation
-    result = functional.nufft(input, coord=coord, width=(4, 4), device=device)
+    result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_2d_nufft())
-def test_odd_width_2d_nufft(device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
+def test_odd_width_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
+    # kernel width
+    width = 3
+
     # computation
-    result = functional.nufft(input, coord=coord, width=5, device=device)
+    result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_2d_nufft())
-def test_odd_width_explicit_2d_nufft(device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
+def test_odd_width_explicit_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
+    # kernel width
+    width = tuple([3] * ndim)
+
     # computation
-    result = functional.nufft(input, coord=coord, width=(5, 5), device=device)
+    result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
 
 
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_3d_nufft())
-def test_even_width_3d_nufft(device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
+def test_osf_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
 
     # get input and output
-    input = img
+    data_in = img
     expected = kdata
 
     # k-space coordinates
     coord = wave.coordinates
 
-    # computation
-    result = functional.nufft(input, coord=coord, width=4, device=device)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_3d_nufft())
-def test_even_width_explicit_3d_nufft(device, img, kdata, wave, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
+    # gridding oversampling factor
+    oversamp = 1.125
 
     # computation
-    result = functional.nufft(
-        input, coord=coord, width=(4, 4, 4), device=device)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_3d_nufft())
-def test_odd_width_3d_nufft(device, img, kdata, wave, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(input, coord=coord, width=5, device=device)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_3d_nufft())
-def test_odd_width_explicit_3d_nufft(device, img, kdata, wave, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=(5, 5, 5), device=device)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-# %% testing oversampling factor
-
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_2d_nufft())
-def test_osf_2d_nufft(device, img, kdata, wave, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(input, coord=coord, oversamp=2, device=device)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave", get_params_3d_nufft())
-def test_osf_3d_nufft(device, img, kdata, wave, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(input, coord=coord, oversamp=2, device=device)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-# %% low rank
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_2d_nufft_lowrank())
-def test_2d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(input, coord=coord, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_3d_nufft_lowrank())
-def test_3d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(input, coord=coord, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_2d_nufft_lowrank())
-def test_even_width_2d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=4, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_2d_nufft_lowrank())
-def test_even_width_explicit_2d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=(4, 4), device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_2d_nufft_lowrank())
-def test_odd_width_2d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=5, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_2d_nufft_lowrank())
-def test_odd_width_explicit_2d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=(5, 5), device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_3d_nufft_lowrank())
-def test_even_width_3d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=4, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_3d_nufft_lowrank())
-def test_even_width_explicit_3d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=(4, 4, 4), device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_3d_nufft_lowrank())
-def test_odd_width_3d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input,  coord=coord, width=5, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_3d_nufft_lowrank())
-def test_odd_width_explicit_3d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, width=(5, 5, 5), device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-# %% testing oversampling factor: precomputed nufft
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_2d_nufft_lowrank())
-def test_osf_2d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, oversamp=2, device=device, basis=basis)
-    result = utils.normalize(result)
-
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
-
-
-@pytest.mark.parametrize("device, img, kdata, wave, basis", get_params_3d_nufft_lowrank())
-def test_osf_3d_nufft_lowrank(device, img, kdata, wave, basis, testing_tol, utils):
-
-    # get input and output
-    input = img
-    expected = kdata
-
-    # k-space coordinates
-    coord = wave.coordinates
-
-    # computation
-    result = functional.nufft(
-        input, coord=coord, oversamp=2, device=device, basis=basis)
+    result = functional.nufft(data_in, coord=coord,
+                              oversamp=oversamp, device=device)
     result = utils.normalize(result)
 
     tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)

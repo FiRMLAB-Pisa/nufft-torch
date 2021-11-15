@@ -1,4 +1,8 @@
 """ Configuration utils for test suite. """
+# pylint: disable=no-member
+# pylint: disable=too-few-public-methods
+# pylint: disable=too-many-arguments
+
 import itertools
 import pytest
 
@@ -7,11 +11,15 @@ import torch
 # %% test parameters
 
 
-def img_size_list():
+def _img_size_list():
     return [3, 4]
 
 
-def device_list():
+def _dim_list():
+    return [2, 3]
+
+
+def _device_list():
     devices = ['cpu']
 
     if torch.cuda.is_available() is True:
@@ -20,84 +28,111 @@ def device_list():
     return devices
 
 
-def dim_list():
-    return [2, 3]
-
-
-def dtype_list():
+def _data_dtype_list():
     return [torch.float32, torch.float64, torch.complex64, torch.complex128]
 
 
-def coord_type_list():
+def _coord_type_list():
     return [torch.float32, torch.float64]
 
 
-def testing_multiple_coils():
+def _sampling_mask_dtype_list():
+    return [torch.int16, torch.int32, torch.int64]
+
+
+def _basis_dtype_list():
+    return [torch.float32, torch.float64, torch.complex64, torch.complex128]
+
+
+def _testing_multiple_coils():
     return [1, 2, 3]
 
 
-def testing_multiple_echoes():
+def _testing_multiple_echoes():
     return [1, 2, 3]
 
 
-def testing_multiple_slices():
+def _testing_multiple_slices():
     return [1, 2, 3]
 
 
-def testing_multiple_frames():
+def _testing_multiple_frames():
     return [1, 2, 3]
 
 # %% fixtures
 
 
 @pytest.fixture
-def testing_tol():
+def _testing_tol():
     return 1e-01
 
 # %% Utils
 
 
-class Utils:
+class _Utils:
 
     @staticmethod
-    def normalize(input):
-        scale = torch.max(torch.abs(input.ravel()))
-        return input / scale
+    def normalize(data_in):
+        """Normalize Input between 0 and 1."""
+        scale = torch.max(torch.abs(data_in.ravel()))
+        return data_in / scale
 
 
 @pytest.fixture
 def utils():
-    return Utils
+    """Wrapper to use Utils as Pytest fixture."""
+    return _Utils
 
-# %% k-space related objects
+# %% data generators
 
 
-class kt_space_trajectory():
-    """ Generate kt-space trajectory."""
+class _ktSamplingMask():
+    def __init__(self, ndim, dtype, nframes, npix):
+
+        # build coordinates
+        locations = torch.arange(npix)
+
+        if ndim == 2:
+            x_i, y_i = torch.meshgrid(locations, locations)
+            x_i = x_i.flatten()
+            y_i = y_i.flatten()
+            mask = torch.stack((x_i, y_i), ax_is=-1).to(dtype)
+
+        elif ndim == 3:
+            x_i, y_i, z_i = torch.meshgrid(locations, locations, locations)
+            x_i = x_i.flatten()
+            y_i = y_i.flatten()
+            z_i = z_i.flatten()
+            mask = torch.stack((x_i, y_i, z_i), ax_is=-1).to(dtype)
+
+        mask = torch.repeat(mask[None, :, :], nframes, ax_is=0)
+
+        # reshape coordinates and build dcf / matrix size
+        self.mask = mask
+        self.acquisition_matrix = npix
+
+
+class _ktSpaceTrajectory():
 
     def __init__(self, ndim, dtype, nframes, npix):
 
         # build coordinates
         nodes = torch.arange(npix) - (npix // 2)
 
-        if ndim == 1:
-            xi = nodes
-            coord = xi[..., None].astype(type)
+        if ndim == 2:
+            x_i, y_i = torch.meshgrid(nodes, nodes)
+            x_i = x_i.flatten()
+            y_i = y_i.flatten()
+            coord = torch.stack((x_i, y_i), ax_is=-1).to(dtype)
 
-        elif ndim == 2:
-            xi, yi = torch.meshgrid(nodes, nodes)
-            xi = xi.flatten()
-            yi = yi.flatten()
-            coord = torch.stack((xi, yi), axis=-1).astype(type)
+        elif ndim == 3:
+            x_i, y_i, z_i = torch.meshgrid(nodes, nodes, nodes)
+            x_i = x_i.flatten()
+            y_i = y_i.flatten()
+            z_i = z_i.flatten()
+            coord = torch.stack((x_i, y_i, z_i), ax_is=-1).to(dtype)
 
-        else:
-            xi, yi, zi = torch.meshgrid(nodes, nodes, nodes)
-            xi = xi.flatten()
-            yi = yi.flatten()
-            zi = zi.flatten()
-            coord = torch.stack((xi, yi, zi), axis=-1).astype(type)
-
-        coord = torch.repeat(coord[None, :, :], nframes, axis=0)
+        coord = torch.repeat(coord[None, :, :], nframes, ax_is=0)
 
         # reshape coordinates and build dcf / matrix size
         self.coordinates = coord
@@ -106,285 +141,164 @@ class kt_space_trajectory():
         self.acquisition_matrix = npix
 
 
-def kt_space_data(ndim, device_id, dtype, nframes, ncoils, nslices, npix):
-    """ Generate kt-space data."""
-    if ndim == 3:
-        data = torch.ones((nframes, ncoils, (npix**ndim)),
+def _image(ndim, device_id, dtype, nframes, nechoes, ncoils, nslices, npix):
+
+    center = int(npix // 2)
+
+    if ndim == 2:
+        img = torch.zeros((nframes, nechoes, ncoils, nslices, npix, npix),
+                          dtype=dtype, device=device_id)
+        img[:, :, :, center, center] = 1
+
+    elif ndim == 3:
+        img = torch.zeros((nframes, nechoes, ncoils, npix, npix, npix),
+                          dtype=dtype, device=device_id)
+        img[:, :, center, center, center] = 1
+
+    return img
+
+
+def _kt_space_data(ndim, device_id, dtype, nframes, nechoes, ncoils, nslices, npix):
+
+    if ndim == 2:
+        data = torch.ones((nframes, nechoes, ncoils, nslices, (npix**ndim)),
                           dtype=dtype, device=device_id)
 
-    else:
-        data = torch.ones((nframes, ncoils, nslices, (npix**ndim)),
+    elif ndim == 3:
+        data = torch.ones((nframes, nechoes, ncoils, (npix**ndim)),
                           dtype=dtype, device=device_id)
 
     return data
 
 
-def lowrank_subspace_projection(dtype, nframes):
-    """ Generate low-rank subspace basis data."""
+def _lowrank_subspace_projection(dtype, nframes):
     return torch.eye(nframes, dtype=dtype)
 
-
-# %% image-space related objects
-def image_2d(device_id, dtype, nframes, ncoils, nslices, npix):
-    """ Generate image-space data."""
-    # calculate image center
-    center = npix // 2
-
-    # build image
-    img = torch.zeros((nframes, ncoils, nslices, npix, npix),
-                      dtype=dtype, device=device_id)
-    img[:, :, :, center, center] = 1
-
-    return img
-
-
-def image_3d(device_id, dtype, nframes, ncoils, npix):
-    """ Generate image-space data."""
-    # calculate image center
-    center = npix // 2
-
-    # build image
-    img = torch.zeros((nframes, ncoils, npix, npix, npix),
-                      dtype=dtype, device=device_id)
-    img[:, :, center, center, center] = 1
-
-    return img
 
 # %% parametrized cases
 
 
-def get_params_2d_nufft():
+def _get_noncartesian_params(lowrank: bool = False,  # pylint: disable=too-many-locals
+                             selfadjoint: bool = False, viewshare: bool = False):
 
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    testing_multiple_slices(),
-                                    img_size_list()]))
+    # get input argument combinations
+    args = [_dim_list(),
+            _device_list(),
+            _data_dtype_list(),
+            _sampling_mask_dtype_list(),
+            _testing_multiple_frames(),
+            _testing_multiple_echoes(),
+            _testing_multiple_coils(),
+            _testing_multiple_slices(),
+            _img_size_list()]
 
+    # add lowrank basis if enabled
+    if lowrank is True:
+        args.append(_basis_dtype_list())
+
+    # sliding window width if enabled
+    if viewshare is True:
+        args.append(0)
+
+    # get combinations
+    args = list(itertools.product(*args))
+
+    # build test data
     test_data = []
 
     for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        nslices = arg[5]
-        npix = arg[6]
+        ndim = arg[0]
+        device_id = arg[1]
+        data_type = arg[2]
+        sampling_mask_type = arg[3]
+        nframes = arg[4]
+        nechoes = arg[5]
+        ncoils = arg[6]
+        nslices = arg[7]
+        npix = arg[8]
 
-        test_data.append((device_id,
-                          image_2d(device_id, data_type, nframes,
-                                   ncoils, nslices, npix),
-                          kt_space_data(2, device_id, data_type,
-                                        nframes, ncoils, nslices, npix),
-                          kt_space_trajectory(2, coord_type, nframes, npix)))
+        test_data.append((ndim, device_id,
+                          _image(ndim, device_id, data_type, nframes,
+                                 nechoes, ncoils, nslices, npix),
+                          _ktSamplingMask(ndim, sampling_mask_type, nframes, npix)))
+
+        if selfadjoint is False:
+            test_data.append(_kt_space_data(
+                ndim, device_id, data_type, nframes, nechoes, ncoils, nslices, npix))
+
+        if lowrank is True and viewshare is False:
+            basis_type = args[9]
+            test_data.append(_lowrank_subspace_projection(basis_type, nframes))
+
+        if viewshare is True and lowrank is False:
+            share_width = args[9]
+            test_data.append(share_width)
+
+        if lowrank is True and viewshare is True:
+            share_width = args[10]
+            test_data.append(share_width)
 
     return test_data
 
 
-def get_params_3d_nufft():
+def _get_cartesian_params(lowrank: bool = False,  # pylint: disable=too-many-locals
+                          selfadjoint: bool = False, viewshare: bool = False):
 
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    img_size_list()]))
+    # get input argument combinations
+    args = [_dim_list(),
+            _device_list(),
+            _data_dtype_list(),
+            _coord_type_list(),
+            _testing_multiple_frames(),
+            _testing_multiple_echoes(),
+            _testing_multiple_coils(),
+            _testing_multiple_slices(),
+            _img_size_list()]
 
+    # add lowrank basis if enabled
+    if lowrank is True:
+        args.append(_basis_dtype_list())
+
+    # sliding window width if enabled
+    if viewshare is True:
+        args.append(0)
+
+    # get combinations
+    args = list(itertools.product(*args))
+
+    # build test data
     test_data = []
 
     for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        npix = arg[5]
+        ndim = arg[0]
+        device_id = arg[1]
+        data_type = arg[2]
+        coord_type = arg[3]
+        nframes = arg[4]
+        nechoes = arg[5]
+        ncoils = arg[6]
+        nslices = arg[7]
+        npix = arg[8]
 
-    test_data.append((device_id,
-                      image_3d(device_id, data_type,
-                               nframes, ncoils, npix),
-                      kt_space_data(3, device_id, data_type,
-                                    nframes, ncoils, 1, npix),
-                      kt_space_trajectory(3, coord_type, nframes, npix)))
+        test_data.append((ndim, device_id,
+                          _image(ndim, device_id, data_type, nframes,
+                                 nechoes, ncoils, nslices, npix),
+                          _ktSpaceTrajectory(ndim, coord_type, nframes, npix)))
 
-    return test_data
+        if selfadjoint is False:
+            test_data.append(_kt_space_data(
+                ndim, device_id, data_type, nframes, nechoes, ncoils, nslices, npix))
 
+        if lowrank is True and viewshare is False:
+            basis_type = args[9]
+            test_data.append(_lowrank_subspace_projection(basis_type, nframes))
 
-def get_params_2d_nufft_lowrank():
+        if viewshare is True and lowrank is False:
+            share_width = args[9]
+            test_data.append(share_width)
 
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    testing_multiple_slices(),
-                                    img_size_list()]))
-
-    test_data = []
-
-    for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        nslices = arg[5]
-        npix = arg[6]
-
-    test_data.append((device_id,
-                      image_2d(device_id, data_type, nframes,
-                               ncoils, nslices, npix),
-                      kt_space_data(2, device_id, data_type,
-                                    nframes, ncoils, nslices, npix),
-                      kt_space_trajectory(2, coord_type, nframes, npix),
-                      lowrank_subspace_projection(data_type, nframes)))
+        if lowrank is True and viewshare is True:
+            share_width = args[10]
+            test_data.append(share_width)
 
     return test_data
-
-
-def get_params_3d_nufft_lowrank():
-
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    img_size_list()]))
-
-    test_data = []
-
-    for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        npix = arg[5]
-
-        test_data.append((device_id,
-                          image_3d(device_id, data_type,
-                                   nframes, ncoils, npix),
-                          kt_space_data(3, device_id, data_type,
-                                        nframes, ncoils, 1, npix),
-                          kt_space_trajectory(3, coord_type, nframes, npix),
-                          lowrank_subspace_projection(data_type, nframes)))
-
-    return test_data
-
-
-def get_params_2d_nufft_selfadjoint():
-
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    testing_multiple_slices(),
-                                    img_size_list()]))
-
-    test_data = []
-
-    for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        nslices = arg[5]
-        npix = arg[6]
-
-        test_data.append((device_id,
-                          image_2d(device_id, data_type, nframes,
-                                   ncoils, nslices, npix),
-                          kt_space_trajectory(2, coord_type, nframes, npix)))
-
-    return test_data
-
-
-def get_params_3d_nufft_selfadjoint():
-
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    img_size_list()]))
-
-    test_data = []
-
-    for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        npix = arg[5]
-
-        test_data.append((device_id,
-                          image_3d(device_id, data_type,
-                                   nframes, ncoils, npix),
-                          kt_space_trajectory(3, coord_type, nframes, npix)))
-
-    return test_data
-
-
-def get_params_2d_nufft_selfadjoint_lowrank():
-
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    testing_multiple_slices(),
-                                    img_size_list()]))
-
-    test_data = []
-
-    for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        nslices = arg[5]
-        npix = arg[6]
-
-        test_data.append((device_id,
-                          image_2d(device_id, data_type, nframes,
-                                   ncoils, nslices, npix),
-                          kt_space_trajectory(2, coord_type, nframes, npix),
-                          lowrank_subspace_projection(data_type, nframes)))
-
-    return test_data
-
-
-def get_params_3d_nufft_selfadjoint_lowrank():
-
-    args = list(itertools.product(*[device_list(),
-                                    dtype_list(),
-                                    coord_type_list(),
-                                    testing_multiple_frames(),
-                                    testing_multiple_coils(),
-                                    img_size_list()]))
-
-    test_data = []
-
-    for arg in args:
-        device_id = arg[0]
-        data_type = arg[1]
-        coord_type = arg[2]
-        nframes = arg[3]
-        ncoils = arg[4]
-        npix = arg[5]
-
-        test_data.append((device_id,
-                          image_3d(device_id, data_type,
-                                   nframes, ncoils, npix),
-                          kt_space_trajectory(3, coord_type, nframes, npix),
-                          lowrank_subspace_projection(data_type, nframes)))
-
-    return test_data
-

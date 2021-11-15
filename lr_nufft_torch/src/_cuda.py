@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CPU specific functions.
+CUDA specific functions.
 
 @author: Matteo
 """
