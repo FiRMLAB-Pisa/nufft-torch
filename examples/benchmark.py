@@ -4,17 +4,16 @@ Created on Wed Nov 10 23:19:42 2021
 
 @author: admin
 """
-from lr_nufft_torch import _test_utils as utils
-from lr_nufft_torch import module
-
-from lr_nufft_torch._util import prod
-
+import numpy as np
+import matplotlib.pyplot as plt
 import torch
 
 import time
 
-import matplotlib.pyplot as plt
-import numpy as np
+from lr_nufft_torch import module
+from lr_nufft_torch._util import prod
+
+import utils
 
 def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     if ndim == 2:

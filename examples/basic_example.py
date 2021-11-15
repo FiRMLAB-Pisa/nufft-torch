@@ -2,14 +2,12 @@
 """
 Basic test for test functionality.
 """
-from lr_nufft_torch import _test_utils as utils
-from lr_nufft_torch import module
-
-from lr_nufft_torch._util import prod
-
 import torch
 
-import numpy as np
+from lr_nufft_torch import module
+from lr_nufft_torch._util import prod
+
+import utils
 
 def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     if ndim == 2:
@@ -28,7 +26,7 @@ def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     return ground_truth, basis, ktraj, dcf, shape
 
-def test_adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
+def _adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     # setup
     ground_truth, basis, ktraj, dcf, shape = _setup_problem(npix, ndim, nechoes, nreadouts)
@@ -51,7 +49,7 @@ def test_adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     return image, image_tkb, ground_truth
     
-def test_selfadjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
+def _selfadjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     # setup
     ground_truth, basis, ktraj, dcf, shape = _setup_problem(npix, ndim, nechoes, nreadouts)
@@ -82,5 +80,5 @@ def test_selfadjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     return image, image_tkb, ground_truth
 
-image, image_tkb, ground_truth = test_adjoint()
+image, image_tkb, ground_truth = _adjoint()
 utils.show_image_series([torch.flip(ground_truth, dims=[-2,-1]), torch.abs(image), torch.flip(image_tkb, dims=[-2,-1])], 0)

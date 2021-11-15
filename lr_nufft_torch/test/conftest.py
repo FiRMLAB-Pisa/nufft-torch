@@ -1,7 +1,6 @@
 """ Configuration utils for test suite. """
 import itertools
 import pytest
-import numpy as np
 
 import torch
 
@@ -74,78 +73,80 @@ def utils():
 
 
 class kt_space_trajectory():
+    """ Generate kt-space trajectory."""
 
-    def __init__(self, ndim, type, nframes, npix):
+    def __init__(self, ndim, dtype, nframes, npix):
 
         # build coordinates
-        nodes = np.arange(npix) - (npix // 2)
+        nodes = torch.arange(npix) - (npix // 2)
 
         if ndim == 1:
             xi = nodes
-            coord = xi[..., np.newaxis].astype(type)
+            coord = xi[..., None].astype(type)
 
         elif ndim == 2:
-            xi, yi = np.meshgrid(nodes, nodes)
+            xi, yi = torch.meshgrid(nodes, nodes)
             xi = xi.flatten()
             yi = yi.flatten()
-            coord = np.stack((xi, yi), axis=-1).astype(type)
+            coord = torch.stack((xi, yi), axis=-1).astype(type)
 
         else:
-            xi, yi, zi = np.meshgrid(nodes, nodes, nodes)
+            xi, yi, zi = torch.meshgrid(nodes, nodes, nodes)
             xi = xi.flatten()
             yi = yi.flatten()
             zi = zi.flatten()
-            coord = np.stack((xi, yi, zi), axis=-1).astype(type)
+            coord = torch.stack((xi, yi, zi), axis=-1).astype(type)
 
-        coord = np.repeat(coord[np.newaxis, :, :], nframes, axis=0)
+        coord = torch.repeat(coord[None, :, :], nframes, axis=0)
 
         # reshape coordinates and build dcf / matrix size
         self.coordinates = coord
-        self.density_comp_factor = np.ones(
-            self.coordinates.shape[:-1], dtype=type)
+        self.density_comp_factor = torch.ones(
+            self.coordinates.shape[:-1], dtype=dtype)
         self.acquisition_matrix = npix
 
 
-def kt_space_data(ndim, device_id, type, nframes, ncoils, nslices, npix):
-
+def kt_space_data(ndim, device_id, dtype, nframes, ncoils, nslices, npix):
+    """ Generate kt-space data."""
     if ndim == 3:
-        data = sigpy.to_device(
-            np.ones((nframes, ncoils, (npix**ndim)), dtype=type), device_id)
+        data = torch.ones((nframes, ncoils, (npix**ndim)),
+                          dtype=dtype, device=device_id)
 
     else:
-        data = sigpy.to_device(
-            np.ones((nframes, ncoils, nslices, (npix**ndim)), dtype=type), device_id)
+        data = torch.ones((nframes, ncoils, nslices, (npix**ndim)),
+                          dtype=dtype, device=device_id)
 
     return data
 
 
-def lowrank_subspace_projection(type, nframes):
-    return np.eye(nframes, dtype=type)
+def lowrank_subspace_projection(dtype, nframes):
+    """ Generate low-rank subspace basis data."""
+    return torch.eye(nframes, dtype=dtype)
 
 
 # %% image-space related objects
-def image_2d(device_id, type, nframes, ncoils, nslices, npix):
-
+def image_2d(device_id, dtype, nframes, ncoils, nslices, npix):
+    """ Generate image-space data."""
     # calculate image center
     center = npix // 2
 
     # build image
-    img = np.zeros((nframes, ncoils, nslices, npix, npix), dtype=type)
+    img = torch.zeros((nframes, ncoils, nslices, npix, npix),
+                      dtype=dtype, device=device_id)
     img[:, :, :, center, center] = 1
-    img = sigpy.to_device(img, device_id)
 
     return img
 
 
-def image_3d(device_id, type, nframes, ncoils, npix):
-
+def image_3d(device_id, dtype, nframes, ncoils, npix):
+    """ Generate image-space data."""
     # calculate image center
     center = npix // 2
 
     # build image
-    img = np.zeros((nframes, ncoils, npix, npix, npix), dtype=type)
+    img = torch.zeros((nframes, ncoils, npix, npix, npix),
+                      dtype=dtype, device=device_id)
     img[:, :, center, center, center] = 1
-    img = sigpy.to_device(img, device_id)
 
     return img
 
@@ -164,14 +165,14 @@ def get_params_2d_nufft():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        nslices = args[i][5]
-        npix = args[i][6]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        nslices = arg[5]
+        npix = arg[6]
 
         test_data.append((device_id,
                           image_2d(device_id, data_type, nframes,
@@ -194,20 +195,20 @@ def get_params_3d_nufft():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        npix = args[i][5]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        npix = arg[5]
 
-        test_data.append((device_id,
-                          image_3d(device_id, data_type,
-                                   nframes, ncoils, npix),
-                          kt_space_data(3, device_id, data_type,
-                                        nframes, ncoils, 1, npix),
-                          kt_space_trajectory(3, coord_type, nframes, npix)))
+    test_data.append((device_id,
+                      image_3d(device_id, data_type,
+                               nframes, ncoils, npix),
+                      kt_space_data(3, device_id, data_type,
+                                    nframes, ncoils, 1, npix),
+                      kt_space_trajectory(3, coord_type, nframes, npix)))
 
     return test_data
 
@@ -224,22 +225,22 @@ def get_params_2d_nufft_lowrank():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        nslices = args[i][5]
-        npix = args[i][6]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        nslices = arg[5]
+        npix = arg[6]
 
-        test_data.append((device_id,
-                          image_2d(device_id, data_type, nframes,
-                                   ncoils, nslices, npix),
-                          kt_space_data(2, device_id, data_type,
-                                        nframes, ncoils, nslices, npix),
-                          kt_space_trajectory(2, coord_type, nframes, npix),
-                          lowrank_subspace_projection(data_type, nframes)))
+    test_data.append((device_id,
+                      image_2d(device_id, data_type, nframes,
+                               ncoils, nslices, npix),
+                      kt_space_data(2, device_id, data_type,
+                                    nframes, ncoils, nslices, npix),
+                      kt_space_trajectory(2, coord_type, nframes, npix),
+                      lowrank_subspace_projection(data_type, nframes)))
 
     return test_data
 
@@ -255,13 +256,13 @@ def get_params_3d_nufft_lowrank():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        npix = args[i][5]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        npix = arg[5]
 
         test_data.append((device_id,
                           image_3d(device_id, data_type,
@@ -286,14 +287,14 @@ def get_params_2d_nufft_selfadjoint():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        nslices = args[i][5]
-        npix = args[i][6]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        nslices = arg[5]
+        npix = arg[6]
 
         test_data.append((device_id,
                           image_2d(device_id, data_type, nframes,
@@ -314,13 +315,13 @@ def get_params_3d_nufft_selfadjoint():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        npix = args[i][5]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        npix = arg[5]
 
         test_data.append((device_id,
                           image_3d(device_id, data_type,
@@ -342,14 +343,14 @@ def get_params_2d_nufft_selfadjoint_lowrank():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        nslices = args[i][5]
-        npix = args[i][6]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        nslices = arg[5]
+        npix = arg[6]
 
         test_data.append((device_id,
                           image_2d(device_id, data_type, nframes,
@@ -371,13 +372,13 @@ def get_params_3d_nufft_selfadjoint_lowrank():
 
     test_data = []
 
-    for i in range(len(args)):
-        device_id = args[i][0]
-        data_type = args[i][1]
-        coord_type = args[i][2]
-        nframes = args[i][3]
-        ncoils = args[i][4]
-        npix = args[i][5]
+    for arg in args:
+        device_id = arg[0]
+        data_type = arg[1]
+        coord_type = arg[2]
+        nframes = arg[3]
+        ncoils = arg[4]
+        npix = arg[5]
 
         test_data.append((device_id,
                           image_3d(device_id, data_type,
@@ -386,3 +387,4 @@ def get_params_3d_nufft_selfadjoint_lowrank():
                           lowrank_subspace_projection(data_type, nframes)))
 
     return test_data
+

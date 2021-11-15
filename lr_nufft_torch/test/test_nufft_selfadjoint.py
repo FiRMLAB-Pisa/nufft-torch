@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Created on Tue Jan  5 09:27:07 2021
@@ -79,3 +78,5 @@ def test_explicit_shape_results_3d(device, img, wave, testing_tol, utils):
     npt.assert_allclose(result, expected, rtol=testing_tol, atol=testing_tol)
      
     
+
+

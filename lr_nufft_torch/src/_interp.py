@@ -34,7 +34,7 @@ from torch import Tensor
 from lr_nufft_torch import _util
 
 # fix this
-from numba import typed
+# from numba import typed
 from numba import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
 import warnings
 
@@ -51,6 +51,7 @@ def prepare_interpolator(coord: Tensor,
                          beta: Union[List[float], Tuple[float]],
                          device: str) -> Dict:
     """Precompute nufft object for faster t_nufft / t_nufft_adjoint.
+    
     Args:
         coord (tensor): Coordinate array of shape [nframes, [int], ndim]
         shape (list or tuple of ints): Overesampled grid size.
@@ -71,8 +72,10 @@ def prepare_interpolator(coord: Tensor,
     coord = coord.reshape([nframes*npts, ndim]).T
 
     # preallocate interpolator
-    index = typed.List()
-    value = typed.List()
+    # index = typed.List()
+    # value = typed.List()
+    index = []
+    value = []
 
     for i in range(ndim):
         # kernel value
@@ -103,6 +106,7 @@ def prepare_interpolator(coord: Tensor,
 
 def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
     """Interpolation from array to points specified by coordinates.
+    
     Args:
         data_in (tensor): Input Cartesian array.
         sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
@@ -149,6 +153,7 @@ def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, 
 
 def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -> Tensor:
     """Gridding of points specified by coordinates to array.
+    
     Args:
         data_in (tensor): Input Non-Cartesian array.
         sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
@@ -207,6 +212,7 @@ def prepare_toeplitz(coord: Tensor,
                      basis: Tensor,
                      dcf: Tensor) -> Dict:
     """Compute spatio-temporal kernel for fast self-adjoint operation.
+    
     Args:
         coord (tensor): Coordinate array of shape [nframes, [int], ndim]
         shape (list or tuple of ints): Overesampled grid size.
@@ -301,6 +307,7 @@ def prepare_toeplitz(coord: Tensor,
 
 def toeplitz(data_out: Tensor, data_in: Tensor, toeplitz_kernel: Dict) -> Tensor:
     """Perform in-place fast self-adjoint by multiplication in k-space with spatio-temporal kernel.
+    
     Args:
         data_out (tensor): Output tensor of oversampled gridded k-space data.
         data_in (tensor): Input tensor of oversampled gridded k-space data.
