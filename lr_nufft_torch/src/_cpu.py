@@ -18,9 +18,7 @@ import numba as nb
 from lr_nufft_torch.src import _common
 
 
-# %% Utils
-
-class _Interpolation:
+class _DeGridding:
 
     apply: Callable
 
@@ -112,6 +110,7 @@ class _Interpolation:
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis_adjoint.shape[-1]
 
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
@@ -127,7 +126,8 @@ class _Interpolation:
 
                     # update
                     gather(noncart_data, cart_data,
-                           (batch, frame, target, source), value, basis_adjoint)
+                           (batch, frame, target, source), value,
+                           basis_adjoint, ncoeff)
 
         return _callback
 
@@ -375,7 +375,7 @@ class _iterator(_common._iterator):
 
         return frame, batch
 
-    _get_noncart_points_parallelize_over_all = staticmethod(nb.njit(
+    _check_boundaries = staticmethod(nb.njit(
         _common._iterator._check_boundaries, fastmath=True, cache=True))
 
 

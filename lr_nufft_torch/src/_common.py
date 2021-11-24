@@ -4,12 +4,15 @@ Common routines for both CPU- and CUDA-based interpolation/gridding.
 
 @author: Matteo Cencini
 """
+# pylint: disable=too-few-public-methods
+# pylint: disable=too-many-arguments
+
 from typing import Tuple
 
 import itertools
 
 
-class _iterator:  # pylint: disable=too-few-public-methods
+class _iterator:
 
     @staticmethod
     def _get_noncart_points_parallelize_over_all(index: int,
@@ -33,18 +36,16 @@ class _iterator:  # pylint: disable=too-few-public-methods
 
     @staticmethod
     def _check_boundaries(frame, nframes):
-
         frame = max(frame, 0)
         frame = min(frame, nframes)
 
         return frame
 
 
-class _kernel:  # pylint: disable=too-few-public-methods
+class _kernel:
 
     @staticmethod
     def _prod(value_tuple: Tuple[float], row_index: int, col_index: int) -> float:
-
         value = value_tuple[0][row_index][col_index]
 
         for i in range(1, len(value_tuple)):
@@ -84,11 +85,10 @@ class _kernel:  # pylint: disable=too-few-public-methods
         return value, index
 
 
-class _gather:  # pylint: disable=too-few-public-methods
+class _gather:
 
     @staticmethod
     def _data(data_out, data_in, index_tuple, kernel_value):
-
         # unpack indexes
         batch, frame, index_out, index_in = index_tuple
 
@@ -100,8 +100,7 @@ class _gather:  # pylint: disable=too-few-public-methods
         data_out[idx_out] += kernel_value * data_in[idx_in]
 
     @staticmethod
-    def _data_lowrank(data_out, data_in, index_tuple, kernel_value, basis_adjoint):
-
+    def _data_lowrank(data_out, data_in, index_tuple, kernel_value, basis_adjoint, ncoeff):
         # unpack indexes
         frame, batch, index_out, index_in = index_tuple
 
@@ -109,7 +108,7 @@ class _gather:  # pylint: disable=too-few-public-methods
         idx_out = (frame, batch, index_out)
 
         # iterate over subspace coefficients
-        for coeff in range(basis_adjoint.shape[-1]):
+        for coeff in range(ncoeff):
             # get input locations
             idx_in = (frame, batch, index_in)
 
