@@ -7,21 +7,69 @@ Created on Mon Nov 22 16:15:00 2021
 from typing import List, Tuple, Dict, Union
 
 import torch
+from torch import Tensor
 
-
-class DeviceDispatcher:
-    pass
-
-class Apodization:
-    """ Image-domain apodization operator to correct effect of convolution."""
-
-    def __init__(self, ndim: int, 
-                 oversamp: float, 
-                 width, beta):
+class DeviceDispatch:
+    """Manage computational devices."""
+    def __init__(self, device_id: str):
+        pass
+    
+    def dispatch(self, input: Tensor) -> Tensor:
+        """Dispatch input to computational device."""
+        pass
+    
+    def gather(self, input: Tensor) -> Tensor:
+        """Gather output to original device"""
         pass
 
-    def apply(self, input):
-        """ Apply apodization step.
+
+class DataReshape:
+    """Ravel and unravel multi-channel/-echo/-slice data."""
+    def __init__(self, shape: Union[List[int], Tuple[int]]):
+        pass
+    
+    def ravel(self, input: Tensor) -> Tensor:
+        """Ravel multi-channel/-echo/-slice data.
+        
+        Args:
+            input (tensor): input data tensor of size [(batch_axis), (data_shape)]
+                            where batch_axis are one or more dimensions corresponding
+                            to different batches (e.g. channels/echoes/slices/...)
+                            with same spectral or spatial locations
+                            and data_shape are one or more dimension describing
+                            different spectral/spatial locations 
+                            (e.g. (n_readouts, n_point_per readout) or (nz, ny, nx)).
+        
+        Returns:
+            tensor: output 2D raveled data tensor of shape 
+                    (n_batches, n_spectral_or_spatial_locations).
+        """
+        pass
+    
+    
+    def unravel(self, input: Tensor) -> Tensor:
+        """Unavel raveled data, restoring original shape.
+        
+        Args:
+            input (tensor): input 2D raveled data tensor  of shape 
+                            (n_batches, n_spectral_or_spatial_locations).
+        
+        Returns:
+            tensor: output original-shape data.
+        """
+        pass
+    
+
+class Apodization:
+    """Image-domain apodization operator to correct effect of convolution."""
+    def __init__(self, 
+                 oversamp: float, 
+                 width: Union[List[int], Tuple[int]], 
+                 beta: Union[List[float], Tuple[float]]):
+        pass
+
+    def apply(self, input: Tensor):
+        """Apply apodization step in-place.
 
         Args:
             input (tensor): Input image.
@@ -29,19 +77,69 @@ class Apodization:
         pass
 
 
-class _ZeroPadding:
-    pass
+class ZeroPadding:
+    """ Image-domain padding operator to interpolate k-space on oversampled grid."""
+    def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]) :
+        pass
+
+    def apply(self, input: Tensor) -> Tensor:
+        """Apply zero padding step.
+
+        Args:
+            input (tensor): Input image.
+            
+        Returns:
+            tensor: Output zero-padded image.
+        """
+        pass
 
 
-class _Cropping:
-    pass
+class Cropping:
+    """Image-domain cropping operator to select targeted FOV."""
+    def __init__(self, shape: Union[List[int], Tuple[int]]) :
+        pass
+
+    def apply(self, input: Tensor) -> Tensor:
+        """ Apply cropping step.
+
+        Args:
+            input (tensor): Input image.
+            
+        Returns:
+            tensor: Output cropped image.
+        """
+        pass
 
 
-class _Gridding:
-    pass
+class Gridding:
+    """K-space data gridding and de-gridding operator."""
+    def __init__(self, kernel_dict: Dict):
+        pass
+
+    def grid_data(self, input: Tensor) -> Tensor:
+        """ Apply cropping step.
+
+        Args:
+            input (tensor): Input image.
+            
+        Returns:
+            tensor: Output cropped image.
+        """
+        pass
+    
+    def degrid_data(self, input: Tensor) -> Tensor:
+        """ Apply cropping step.
+
+        Args:
+            input (tensor): Input image.
+            
+        Returns:
+            tensor: Output cropped image.
+        """
+        pass
 
 
-class _FFT:
+def FFT():
     pass
 
 
