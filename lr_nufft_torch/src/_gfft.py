@@ -11,21 +11,44 @@ from torch import Tensor
 
 class DeviceDispatch:
     """Manage computational devices."""
-    def __init__(self, device_id: str):
-        pass
     
-    def dispatch(self, input: Tensor) -> Tensor:
+    computation_device: str
+    data_device: str
+    
+    def __init__(self, computation_device: str, data_device: str):
+        """DeviceDispatch object constructor.
+        
+        Args:
+            computation_device: target device to perform the computation.
+            data_device: original device hosting the data (could be the same)
+                         as computation device.
+            
+        """
+        self.computation_device = computation_device
+        self.data_device = data_device
+    
+    def dispatch(self, *tensors):
         """Dispatch input to computational device."""
-        pass
+        for tensor in tensors:
+            tensor.to(self.computation_device)
     
-    def gather(self, input: Tensor) -> Tensor:
+    def gather(self, *tensors):
         """Gather output to original device"""
-        pass
+        for tensor in tensors:
+            tensor.to(self.data_device)
 
 
 class DataReshape:
     """Ravel and unravel multi-channel/-echo/-slice data."""
-    def __init__(self, shape: Union[List[int], Tuple[int]]):
+    
+    def __init__(self, ndim: int, shape: Union[List[int], Tuple[int]]):
+        """DataReshape object constructor.
+        
+        Args:
+            ndim: dimensionality of encoded k-space.
+            shape: original data shape before raveling.
+            
+        """
         pass
     
     def ravel(self, input: Tensor) -> Tensor:
@@ -143,101 +166,101 @@ def FFT():
     pass
 
 
-def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
-    """Interpolation from array to points specified by coordinates.
+# def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
+#     """Interpolation from array to points specified by coordinates.
 
-    Args:
-        data_in (tensor): Input Cartesian array.
-        sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
-        adjoint_basis (tensor): Adjoint low rank subspace projection operator (subspace to time); can be None.
+#     Args:
+#         data_in (tensor): Input Cartesian array.
+#         sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
+#         adjoint_basis (tensor): Adjoint low rank subspace projection operator (subspace to time); can be None.
 
-    Returns:
-        data_out (tensor): Output Non-Cartesian array.
-    """
-    # unpack input
-    index = sparse_coeff['index']
-    value = sparse_coeff['value']
-    shape = sparse_coeff['shape']
-    pts_shape = sparse_coeff['pts_shape']
-    ndim = sparse_coeff['ndim']
-    device = sparse_coeff['device']
+#     Returns:
+#         data_out (tensor): Output Non-Cartesian array.
+#     """
+#     # unpack input
+#     index = sparse_coeff['index']
+#     value = sparse_coeff['value']
+#     shape = sparse_coeff['shape']
+#     pts_shape = sparse_coeff['pts_shape']
+#     ndim = sparse_coeff['ndim']
+#     device = sparse_coeff['device']
 
-    # get input sizes
-    nframes = index[0].shape[0]
-    npts = _util.prod(pts_shape)
+#     # get input sizes
+#     nframes = index[0].shape[0]
+#     npts = _util.prod(pts_shape)
 
-    # reformat data for computation
-    batch_shape = data_in.shape[1:-ndim]
-    batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
+#     # reformat data for computation
+#     batch_shape = data_in.shape[1:-ndim]
+#     batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
 
-    data_in = data_in.reshape([data_in.shape[0], batch_size, *shape])
+#     data_in = data_in.reshape([data_in.shape[0], batch_size, *shape])
 
-    # preallocate output data
-    data_out = torch.zeros((nframes, batch_size, npts),  # pylint: disable=no-member
-                           dtype=data_in.dtype, device=data_in.device)
+#     # preallocate output data
+#     data_out = torch.zeros((nframes, batch_size, npts),  # pylint: disable=no-member
+#                            dtype=data_in.dtype, device=data_in.device)
 
-    # do actual interpolation
-    if device == 'cpu':
-        do_interpolation[ndim-2](data_out, data_in,
-                                 value, index, adjoint_basis)
-    else:
-        do_interpolation_cuda[ndim-2](
-            data_out, data_in, value, index, adjoint_basis)
+#     # do actual interpolation
+#     if device == 'cpu':
+#         do_interpolation[ndim-2](data_out, data_in,
+#                                  value, index, adjoint_basis)
+#     else:
+#         do_interpolation_cuda[ndim-2](
+#             data_out, data_in, value, index, adjoint_basis)
 
-    # reformat for output
-    data_out = data_out.reshape([nframes, *batch_shape, *pts_shape])
+#     # reformat for output
+#     data_out = data_out.reshape([nframes, *batch_shape, *pts_shape])
 
-    return data_out
+#     return data_out
 
 
-def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -> Tensor:
-    """Gridding of points specified by coordinates to array.
+# def gridding(data_in: Tensor, sparse_coeff: Dict,  basis: Union[None, Tensor]) -> Tensor:
+#     """Gridding of points specified by coordinates to array.
 
-    Args:
-        data_in (tensor): Input Non-Cartesian array.
-        sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
-        basis (tensor): Low rank subspace projection operator (time to subspace); can be None.
+#     Args:
+#         data_in (tensor): Input Non-Cartesian array.
+#         sparse_coeff (dict): pre-calculated interpolation coefficients in sparse COO format.
+#         basis (tensor): Low rank subspace projection operator (time to subspace); can be None.
 
-    Returns:
-        data_out (tensor): Output Cartesian array.
-    """
-    # unpack input
-    index = sparse_coeff['index']
-    value = sparse_coeff['value']
-    shape = sparse_coeff['shape']
-    pts_shape = sparse_coeff['pts_shape']
-    ndim = sparse_coeff['ndim']
-    device = sparse_coeff['device']
+#     Returns:
+#         data_out (tensor): Output Cartesian array.
+#     """
+#     # unpack input
+#     index = sparse_coeff['index']
+#     value = sparse_coeff['value']
+#     shape = sparse_coeff['shape']
+#     pts_shape = sparse_coeff['pts_shape']
+#     ndim = sparse_coeff['ndim']
+#     device = sparse_coeff['device']
 
-    # get input sizes
-    nframes = index[0].shape[0]
-    npts = _util.prod(pts_shape)
+#     # get input sizes
+#     nframes = index[0].shape[0]
+#     npts = _util.prod(pts_shape)
 
-    # get number of coefficients
-    if basis is not None:
-        ncoeff = basis.shape[0]
-    else:
-        ncoeff = nframes
+#     # get number of coefficients
+#     if basis is not None:
+#         ncoeff = basis.shape[0]
+#     else:
+#         ncoeff = nframes
 
-    # reformat data for computation
-    batch_shape = data_in.shape[1:-len(pts_shape)]
-    batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
+#     # reformat data for computation
+#     batch_shape = data_in.shape[1:-len(pts_shape)]
+#     batch_size = _util.prod(batch_shape)  # ncoils * nslices * [int]
 
-    # argument reshape
-    data_in = data_in.reshape([nframes, batch_size, npts])
+#     # argument reshape
+#     data_in = data_in.reshape([nframes, batch_size, npts])
 
-    # preallocate output data
-    data_out = torch.zeros((ncoeff, batch_size, *shape),  # pylint: disable=no-member
-                           dtype=data_in.dtype, device=data_in.device)
+#     # preallocate output data
+#     data_out = torch.zeros((ncoeff, batch_size, *shape),  # pylint: disable=no-member
+#                            dtype=data_in.dtype, device=data_in.device)
 
-    # do actual gridding
-    if device == 'cpu':
-        do_gridding[ndim-2](data_out, data_in, value, index, basis)
-    else:
-        do_gridding_cuda[ndim-2](
-            data_out, data_in, value, index, basis)
+#     # do actual gridding
+#     if device == 'cpu':
+#         do_gridding[ndim-2](data_out, data_in, value, index, basis)
+#     else:
+#         do_gridding_cuda[ndim-2](
+#             data_out, data_in, value, index, basis)
 
-    # reformat for output
-    data_out = data_out.reshape([ncoeff, *batch_shape, *shape])
+#     # reformat for output
+#     data_out = data_out.reshape([ncoeff, *batch_shape, *shape])
 
-    return data_out
+#     return data_out
