@@ -33,7 +33,7 @@ class _DeGridding:
 
         # select correct sub-routine
         if basis_adjoint is None:
-            callback = _Interpolation._get_callback()
+            callback = _DeGridding._get_callback()
 
             def _apply(noncart_data, cart_data):
                 return callback(noncart_data, cart_data,
@@ -41,7 +41,7 @@ class _DeGridding:
                                 kernel_neighbourhood)
 
         else:
-            callback = _Interpolation._get_lowrank_callback()
+            callback = _DeGridding._get_lowrank_callback()
 
             def _apply(noncart_data, cart_data):
                 return callback(noncart_data, cart_data,

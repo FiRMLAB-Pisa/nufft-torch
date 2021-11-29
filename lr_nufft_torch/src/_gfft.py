@@ -4,34 +4,63 @@ Created on Mon Nov 22 16:15:00 2021
 
 @author: mcencini
 """
+# pylint: disable=no-member
+
 from typing import List, Tuple, Dict, Union
+
+import numpy as np
 
 import torch
 from torch import Tensor
 
+
+def FFT():
+    pass
+
+
+def prepareNUFFT():
+    pass
+
+
+def NUFFT():
+    pass
+
+
+def NUFFTAdjoint():
+    pass
+
+
+def prepareNUFFTSelfAdjoint():
+    pass
+
+
+def NUFFTSelfAdjoint():
+    pass
+
+
 class DeviceDispatch:
     """Manage computational devices."""
-    
+
     computation_device: str
     data_device: str
-    
+
     def __init__(self, computation_device: str, data_device: str):
         """DeviceDispatch object constructor.
-        
+
         Args:
             computation_device: target device to perform the computation.
             data_device: original device hosting the data (could be the same)
                          as computation device.
-            
+
         """
         self.computation_device = computation_device
         self.data_device = data_device
-    
+
     def dispatch(self, *tensors):
         """Dispatch input to computational device."""
         for tensor in tensors:
             tensor.to(self.computation_device)
-    
+
     def gather(self, *tensors):
         """Gather output to original device"""
         for tensor in tensors:
@@ -39,57 +68,137 @@ class DeviceDispatch:
 
 
 class DataReshape:
-    """Ravel and unravel multi-channel/-echo/-slice data."""
-    
-    def __init__(self, ndim: int, shape: Union[List[int], Tuple[int]]):
+    """Ravel and unravel multi-channel/-echo/-slice sparse k-space data."""
+    batch_shape: Union[List[int], Tuple[int]]
+    batch_size: int
+    nframes: int
+    batch_axis_shape: Union[None, List[int], Tuple[int]]
+
+    def __init__(self, coord_shape: Union[List[int], Tuple[int]]):
         """DataReshape object constructor.
-        
+
         Args:
-            ndim: dimensionality of encoded k-space.
-            shape: original data shape before raveling.
-            
+            coord_shape: shape of k-space coordinates tensor.
+
         """
-        pass
-    
+        self.batch_shape = coord_shape[1:-1]
+        self.batch_size = np.prod(self.batch_shape)
+        self.nframes = coord_shape[0]
+
     def ravel(self, input: Tensor) -> Tensor:
         """Ravel multi-channel/-echo/-slice data.
-        
+
         Args:
-            input (tensor): input data tensor of size [(batch_axis), (data_shape)]
+            input (tensor): input data tensor of size [*(batch_axis_shape), *(batch_shape)]
                             where batch_axis are one or more dimensions corresponding
                             to different batches (e.g. channels/echoes/slices/...)
-                            with same spectral or spatial locations
-                            and data_shape are one or more dimension describing
-                            different spectral/spatial locations 
-                            (e.g. (n_readouts, n_point_per readout) or (nz, ny, nx)).
-        
+                            with same spectral locations
+                            and batch_shape are one or more dimension describing
+                            different spectral locations 
+                            (e.g. (n_readouts, n_point_per readout)).
+
         Returns:
-            tensor: output 2D raveled data tensor of shape 
-                    (n_batches, n_spectral_or_spatial_locations).
+            tensor: output 3D raveled data tensor of shape 
+                    (n_frames, n_batches, n_spectral_locations).
         """
-        pass
-    
-    
+        # keep original batch shape
+        self.batch_axis_shape = input.shape[1:-len(self.batch_shape)]
+        nbatches = np.prod(self.batch_axis_shape)
+
+        return input.reshape(self.nframes, nbatches, self.batch_size)
+
     def unravel(self, input: Tensor) -> Tensor:
         """Unavel raveled data, restoring original shape.
-        
+
         Args:
-            input (tensor): input 2D raveled data tensor  of shape 
-                            (n_batches, n_spectral_or_spatial_locations).
-        
+            input (tensor): input 3D raveled data tensor  of shape 
+                            (n_frames, n_batches, n_spectral_locations).
+
         Returns:
             tensor: output original-shape data.
         """
-        pass
-    
+        return input.reshape(self.nframes, *self.batch_axis_shape, *self.batch_shape)
+
+
+class GriddedReshape:
+    """Ravel and unravel multi-channel/-echo/-slice gridded k-space data."""
+    ndim: int
+    batch_axis_shape: Union[None, List[int], Tuple[int]]
+
+    def __init__(self, coord_shape: Union[List[int], Tuple[int]]):
+        """GriddedReshape object constructor.
+
+        Args:
+            coord_shape: shape of k-space coordinates tensor.
+
+        """
+        self.ndim = coord_shape[-1]
+        self.nframes = coord_shape[0]
+        self.grid_shape: Union[List[int], Tuple[int]]
+
+    def ravel(self, input: Tensor) -> Tensor:
+        """Ravel multi-channel/-echo/-slice data.
+
+        Args:
+            input (tensor): input data tensor of size [*(batch_axis_shape), *(grid_shape)]
+                            where batch_axis are one or more dimensions corresponding
+                            to different batches (e.g. channels/echoes/slices/...)
+                            with same spectral locations
+                            and batch_shape are one or more dimension describing
+                            different spectral locations 
+                            (e.g. ((nz), ny, nx)).
+
+        Returns:
+            tensor: output 3D raveled data tensor of shape 
+                    (n_frames, n_batches, n_spectral_locations).
+        """
+        # keep original batch shape
+        self.batch_axis_shape = input.shape[1:-self.ndim]
+        self.grid_shape = input.shape[-self.ndim:]
+
+        nbatches = np.prod(self.batch_axis_shape)
+        batch_size = np.prod(self.grid_shape)
+
+        return input.reshape(self.nframes, nbatches, batch_size)
+
+    def unravel(self, input: Tensor) -> Tensor:
+        """Unavel raveled data, restoring original shape.
+
+        Args:
+            input (tensor): input 3D raveled data tensor  of shape 
+                            (n_frames, n_batches, n_spectral_locations).
+
+        Returns:
+            tensor: output original-shape data.
+        """
+        return input.reshape(self.nframes, *self.batch_axis_shape, *self.grid_shape)
+
 
 class Apodization:
     """Image-domain apodization operator to correct effect of convolution."""
-    def __init__(self, 
-                 oversamp: float, 
-                 width: Union[List[int], Tuple[int]], 
+    ndim: int
+    apod: List[float]
+
+    def __init__(self,
+                 grid_shape: Union[List[int], Tuple[int]],
+                 oversamp: float,
+                 width: Union[List[int], Tuple[int]],
                  beta: Union[List[float], Tuple[float]]):
-        pass
+
+        # get number of spatial dimensions
+        self.ndim = len(grid_shape)
+        self.apod = []
+
+        for axis in range(-self.ndim, 0):
+            i = grid_shape[axis]
+            os_i = np.ceil(oversamp * i)
+            idx = torch.arange(i, dtype=torch.float32)
+
+            # Calculate apodization
+            apod = (beta[axis]**2 - (np.pi * width[axis]
+                    * (idx - i // 2) / os_i)**2)**0.5
+            apod /= torch.sinh(apod)
+            self.apod.append(apod.reshape([i] + [1] * (-axis - 1)))
 
     def apply(self, input: Tensor):
         """Apply apodization step in-place.
@@ -97,45 +206,75 @@ class Apodization:
         Args:
             input (tensor): Input image.
         """
-        pass
+        for axis in range(-self.ndim, 0):
+            input *= self.apod[axis]
+
+
+def _get_oversampled_shape(oversamp: float, shape:  Union[List[int], Tuple[int]]) -> Tuple[int]:
+    return [np.ceil(oversamp * axis).astype(int) for axis in shape]
 
 
 class ZeroPadding:
     """ Image-domain padding operator to interpolate k-space on oversampled grid."""
-    def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]) :
-        pass
+    padsize: Tuple[int]
+
+    def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]):
+        # get oversampled shape
+        oshape = _get_oversampled_shape(oversamp, shape)
+        
+        # get pad size
+        padsize = [(oshape[axis] - shape[axis]) // 2 for axis in range(len(shape))]
+        
+        # get amount of pad over each direction
+        pad = np.repeat(padsize, 2)
+        pad.reverse() # torch take from last to first
+        
+        self.padsize = tuple(pad)
 
     def apply(self, input: Tensor) -> Tensor:
         """Apply zero padding step.
 
         Args:
             input (tensor): Input image.
-            
+
         Returns:
             tensor: Output zero-padded image.
         """
-        pass
+        return torch.nn.functional.pad(input, self.padsize, mode="constat", value=0)
 
 
 class Cropping:
     """Image-domain cropping operator to select targeted FOV."""
-    def __init__(self, shape: Union[List[int], Tuple[int]]) :
-        pass
+    cropsize: Tuple[int]
+
+    def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]):
+        # get oversampled shape
+        oshape = _get_oversampled_shape(oversamp, shape)
+        
+        # get crop size
+        cropsize = [(shape[axis] - oshape[axis]) // 2 for axis in range(len(shape))]
+        
+        # get amount of crop over each direction
+        crop = np.repeat(cropsize, 2)
+        crop.reverse() # torch take from last to first
+        
+        self.cropsize = crop
 
     def apply(self, input: Tensor) -> Tensor:
-        """ Apply cropping step.
+        """Apply zero padding step.
 
         Args:
             input (tensor): Input image.
-            
+
         Returns:
-            tensor: Output cropped image.
+            tensor: Output zero-padded image.
         """
-        pass
+        return torch.nn.functional.pad(input, self.cropsize)
 
 
 class Gridding:
     """K-space data gridding and de-gridding operator."""
+
     def __init__(self, kernel_dict: Dict):
         pass
 
@@ -144,26 +283,22 @@ class Gridding:
 
         Args:
             input (tensor): Input image.
-            
+
         Returns:
             tensor: Output cropped image.
         """
         pass
-    
+
     def degrid_data(self, input: Tensor) -> Tensor:
         """ Apply cropping step.
 
         Args:
             input (tensor): Input image.
-            
+
         Returns:
             tensor: Output cropped image.
         """
         pass
-
-
-def FFT():
-    pass
 
 
 # def interpolate(data_in: Tensor, sparse_coeff: Dict, adjoint_basis: Union[None, Tensor]) -> Tensor:
