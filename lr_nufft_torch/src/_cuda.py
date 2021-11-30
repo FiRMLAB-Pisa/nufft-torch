@@ -2,7 +2,7 @@
 """
 CUDA specific functions.
 
-@author: Matteo
+@author: Matteo Cencini
 """
 # pylint: disable=not-an-iterable
 # pylint: disable=too-few-public-methods

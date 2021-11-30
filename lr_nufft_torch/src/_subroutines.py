@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Nov 22 16:15:00 2021
+Private subroutines for FFT and NUFFT.
 
-@author: mcencini
+@author: Matteo Cencini
 """
 # pylint: disable=no-member
 # pylint: disable=too-few-public-methods
@@ -42,7 +42,7 @@ def prepare_nufft(coord: Tensor,
                   width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
                   sharing_width: Union[None, int] = None,
-                  device: str = 'cpu') -> Dict:
+                  device: Union[str, device] = 'cpu') -> Dict:
     """Precompute nufft object for faster t_nufft / t_nufft_adjoint.
     Args:
         coord (tensor): Coordinate array of shape [nframes, ..., ndim]
@@ -50,35 +50,13 @@ def prepare_nufft(coord: Tensor,
         oversamp (float): Grid oversampling factor.
         width (int or tuple of int): Interpolation kernel full-width.
         basis (tensor): Low-rank temporal subspace basis.
+        sharing_width (int): Width of sharing window in sliding-window reconstruction.
+        device: CPU or CUDA.
 
     Returns:
         dict: structure containing interpolator object.
     """
-    # get parameters
-    ndim = coord.shape[-1]
-
-    # get arrays
-    width, shape = _scalars2arrays(ndim, width, shape)
-
-    # get kernel shape parameter
-    beta = _beatty_parameter(width, oversamp)
-
-    # get grid shape
-    grid_shape = _get_oversampled_shape(shape, oversamp, ndim)
-
-    # adjust coordinates
-    coord = _scale_coord(coord, shape, oversamp)
-
-    # compute interpolator
-    kernel_dict = _prepare_kernel(
-        coord, grid_shape, width, beta, device, basis, sharing_width)
-
-    return {'ndim': ndim,
-            'oversamp': oversamp,
-            'width': width,
-            'beta': beta,
-            'kernel_dict': kernel_dict,
-            'device': device}
+    return InterpolatorFactory()(coord, shape, width, oversamp, basis, sharing_width, device)
 
 
 def nufft(image: Tensor, interpolator: Dict) -> Tensor:
@@ -288,52 +266,108 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
 
 class Utils:
     """Miscellaneous utility functions."""
-    
+
     @staticmethod
     def _get_oversampled_shape(oversamp: float, shape:  Union[List[int], Tuple[int]]) -> Tuple[int]:
         return [np.ceil(oversamp * axis).astype(int) for axis in shape]
-    
+
     @staticmethod
     def _scalars2arrays(ndim, *inputs):
         arrays = []
-        
+
         for input in inputs:
             if np.isscalar(input):
                 arrays.append(np.array([input] * ndim, dtype=np.int16))
             else:
                 arrays.append(np.array(input, dtype=np.int16))
-    
+
         return arrays
-    
+
     @staticmethod
     def _beatty_parameter(width, oversamp):
         return np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
-    
+
     @staticmethod
     def _scale_coord(coord, shape, oversamp):
         ndim = coord.shape[-1]
         coord = coord.clone()
-        
+
         for i in range(-ndim, 0):
             scale = np.ceil(oversamp * shape[i]) / shape[i]
             shift = np.ceil(oversamp * shape[i]) // 2
             coord[..., i] *= scale
             coord[..., i] += shift
-    
+
         return coord
-    
-    
+
+
 class InterpolatorFactory:
     """Functions to prepare NUFFT operator."""
-    
-    def __call__(self, coord, shape, width, beta, device, basis, sharing_width):
-        pass        
-    
-    def _prepare_sparse_coefficient_matrix(self, value, index, coord, width, beta, shape):
-        for i in range(self.ndim):
-            _cpu.prepare_sparse_coefficient_matrix(value[i], index[i], coord[i], width[i], beta[i], shape[i])
-        
-    def _parse_coordinate_size(self, coord, width):  
+
+    def __call__(self, coord, shape, width, oversamp, basis, sharing_width, device):
+
+        # get parameters
+        ndim = coord.shape[-1]
+
+        # get arrays
+        width, shape = Utils._scalars2arrays(ndim, width, shape)
+
+        # get kernel shape parameter
+        beta = Utils._beatty_parameter(width, oversamp)
+
+        # get grid shape
+        grid_shape = Utils._get_oversampled_shape(shape, oversamp, ndim)
+
+        # adjust coordinates
+        coord = Utils._scale_coord(coord, shape, oversamp)
+
+        # compute interpolator
+        kernel_dict = self._prepare_kernel(
+            coord, grid_shape, width, beta, basis, sharing_width, device)
+
+        # create interpolator dict
+        interpolator = {'ndim': ndim,
+                        'oversamp': oversamp,
+                        'width': width,
+                        'beta': beta,
+                        'kernel_dict': kernel_dict,
+                        'device': device}
+
+        return interpolator
+
+    def _prepare_kernel(self, coord, shape, width, beta, basis, sharing_width, device):
+
+        # parse size
+        self._parse_coordinate_size(coord, width)
+
+        # reformat coordinates
+        self._reformat_coordinates(coord)
+
+        # calculate interpolator
+        kernel_tuple = self._prepare_sparse_coefficient_matrix(
+            coord, shape, width, beta, device)
+
+        # adjust basis
+        if basis is not None:
+            # build basis adjoint
+            basis_adjoint = basis.conj().T
+
+            # convert to numpy or numba cuda array
+            basis = Utils.pytorch2numba(basis.to(device))
+            basis_adjoint = Utils.pytorch2numba(basis_adjoint.to(device))
+        else:
+            basis_adjoint = None
+
+        # prepare kernel dictionary
+        kernel_dict = {'sparse_coefficients': kernel_tuple,
+                       'width': width,
+                       'basis': basis,
+                       'basis_adjoint': basis_adjoint,
+                       'sharing_width': sharing_width}
+
+        return kernel_dict
+
+    def _parse_coordinate_size(self, coord, width):
         # inspect input coordinates
         self.nframes = coord.shape[0]
         pts_shape = coord.shape[1:-1]
@@ -342,29 +376,111 @@ class InterpolatorFactory:
         # calculate total number of point per frame and total number of points
         self.npts = np.prod(pts_shape)
         self.coord_length = self.nframes*self.npts
-        
+
     def _reformat_coordinates(self, coord):
         return coord.reshape([self.coord_length, self.ndim]).T
-    
-    def _reformat_sparse_coefficients(self):
-        pass
-    
+
     def _preallocate_sparse_coefficient_matrix(self, width):
         index = []
         value = []
-    
+
         for i in range(self.ndim):
             # kernel value
-            empty_value = np.zeros((self.coord_length, width[i]), dtype=np.float32)
-            value.append(empty_value)  
-            
+            empty_value = torch.zeros(
+                (self.coord_length, width[i]), dtype=torch.float32)
+            value.append(empty_value)
+
             # kernel index
-            empty_index = np.zeros((self.coord_length, width[i]), dtype=np.int32)
+            empty_index = torch.zeros(
+                (self.coord_length, width[i]), dtype=torch.int32)
             index.append(empty_index)
-            
+
         return value, index
-                
+
+    def _reformat_sparse_coefficients(self, value, index, width, device):
+        for i in range(self.ndim):
+            value[i] = value[i].reshape(
+                [self.nframes, self.npts, width[i]]).to(device)
+            index[i] = index[i].reshape(
+                [self.nframes, self.npts, width[i]]).to(device)
+            value[i], index[i] = BackendBridge.pytorch2numba(
+                value[i], index[i])
+
+    def _prepare_sparse_coefficient_matrix(self, coord, shape, width, beta, device):
+        # preallocate interpolator
+        value, index = self._preallocate_sparse_coefficient_matrix(width)
+
+        # actual computation
+        for i in range(self.ndim):
+            value[i], index[i], coord[i] = BackendBridge.pytorch2numba(
+                value[i], index[i], coord[i])
+            _cpu.prepare_sparse_coefficient_matrix(
+                value[i], index[i], coord[i], beta[i], shape[i])
+            value[i], index[i], coord[i] = BackendBridge.numba2pytorch(
+                value[i], index[i], coord[i])
+
+        # reformat coefficients
+        self._reformat_sparse_coefficients(value, index, width, device)
+
+        # pack kernel tuple
+        kernel_tuple = (tuple(value), tuple(index), shape)
+
+        return kernel_tuple
+
+class NonCartesianToeplitzFactory(InterpolatorFactory):
     
+    def __call__(self, coord, shape, width, oversamp, basis, sharing_width, device, dcf):
+        
+        # get parameters
+        ndim = coord.shape[-1]
+
+        # get arrays
+        width, shape = Utils._scalars2arrays(ndim, width, shape)
+
+        # get kernel shape parameter
+        beta = Utils._beatty_parameter(width, oversamp)
+
+        # get grid shape
+        grid_shape = Utils._get_oversampled_shape(shape, oversamp, ndim)
+
+        # adjust coordinates
+        coord = Utils._scale_coord(coord, shape, oversamp)
+        
+        # actual kernel precomputation
+        kernel = self._prepare_kernel(coord, grid_shape, width, beta, basis, sharing_width, device, dcf)
+    
+    def _prepare_kernel(self, coord, shape, width, beta, basis, sharing_width, device, dcf):
+
+        # parse size
+        self._parse_coordinate_size(coord, width)
+
+        # reformat coordinates
+        self._reformat_coordinates(coord)
+
+        # calculate interpolator
+        kernel_tuple = self._prepare_sparse_coefficient_matrix(
+            coord, shape, width, beta, device)
+
+        # adjust basis
+        if basis is not None:
+            # build basis adjoint
+            basis_adjoint = basis.conj().T
+
+            # convert to numpy or numba cuda array
+            basis = Utils.pytorch2numba(basis.to(device))
+            basis_adjoint = Utils.pytorch2numba(basis_adjoint.to(device))
+        else:
+            basis_adjoint = None
+
+        # prepare kernel dictionary
+        kernel_dict = {'sparse_coefficients': kernel_tuple,
+                       'width': width,
+                       'basis': basis,
+                       'basis_adjoint': basis_adjoint,
+                       'sharing_width': sharing_width}
+
+        return kernel_dict
+
 class DeviceDispatch:
     """Manage computational devices."""
 
@@ -610,7 +726,7 @@ class Crop:
 
 class BaseFFT:
     """Cartesian (Inverse) Fourier Transform."""
-    
+
     @staticmethod
     def _normalize_axes(axes, ndim):
         if axes is None:
@@ -637,7 +753,7 @@ class BaseFFT:
         output = torch.fft.fftshift(tmp, dim=axes)
 
         return output
-    
+
     @staticmethod
     def _ifftc(input, oshape=None, axes=None, norm='ortho'):
 
@@ -657,7 +773,7 @@ class BaseFFT:
         output = torch.fft.fftshift(tmp, dim=axes)
 
         return output
-    
+
 
 class FFT(BaseFFT):
     """Cartesian Fourier Transform."""
@@ -701,52 +817,55 @@ class IFFT(BaseFFT):
             output = output.to(input.dtype, copy=False)
 
         return output
-    
+
+
 class BackendBridge:
-    
+
     @staticmethod
     def numba2pytorch(*arrays, requires_grad=True):  # pragma: no cover
         """Zero-copy conversion from Numpy/Numba CUDA array to PyTorch tensor.
-    
+
         Args:
             arrays (numpy/cupy array): list or tuple of input.
             requires_grad(bool): Set .requires_grad output tensor
-    
+
         Returns:
             PyTorch tensor.
         """
         is_cuda = nb.cuda.is_cuda_array(arrays[0])
-    
+
         if is_cuda:
-            tensors = [torch.as_tensor(array, device="cuda") for array in arrays]
+            tensors = [torch.as_tensor(array, device="cuda")
+                       for array in arrays]
         else:
             tensors = [torch.from_numpy(array) for array in arrays]
-    
+
         for tensor in tensors:
             tensor.requires_grad = requires_grad
             tensor = tensor.contiguous()
-    
+
         return tuple(tensors)
-    
+
     @staticmethod
     def pytorch2numba(*tensors):  # pragma: no cover
         """Zero-copy conversion from PyTorch tensor to Numpy/Numba CUDA array.
-    
+
         Args:
             tensor (PyTorch tensor): input.
-    
+
         Returns:
             Numpy/Numba CUDA array.
-    
+
         """
         device = tensors[0].device
-    
+
         if device.type == 'cpu':
-            arrays = [tensor.detach().contiguous().numpy() for tensor in tensors]
+            arrays = [tensor.detach().contiguous().numpy()
+                      for tensor in tensors]
         else:
             arrays = [nb.cuda.as_cuda_array(tensor.contiguous())
                       for tensor in tensors]
-    
+
         return arrays
 
 

@@ -44,7 +44,7 @@ warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 # CUDA settings
 threadsperblock = 32
 
-
+#%%
 def prepare_interpolator(coord: Tensor,
                          shape: Union[List[int], Tuple[int]],
                          width: Union[List[int], Tuple[int]],

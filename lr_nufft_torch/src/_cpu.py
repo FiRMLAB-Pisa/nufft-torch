@@ -2,7 +2,7 @@
 """
 CPU specific functions.
 
-@author: Matteo
+@author: Matteo Cencini
 """
 # pylint: disable=not-an-iterable
 # pylint: disable=too-few-public-methods
@@ -19,23 +19,22 @@ from lr_nufft_torch.src import _common
 
 
 @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-def _prepare_interpolator(
-        interp_value, interp_index, coord, kernel_width, kernel_param, grid_shape):
+def _prepare_sparse_coefficient_matrix(value, index, coord, beta, shape):
 
     # get sizes
     npts = coord.shape[0]
-    kernel_width = interp_index.shape[-1]
+    width = index.shape[-1]
 
     for i in nb.prange(npts):
-        x_0 = np.ceil(coord[i] - kernel_width / 2)
+        x_0 = np.ceil(coord[i] - width / 2)
 
-        for x_i in range(kernel_width):
+        for x_i in range(width):
             val = _kernel._function(
-                ((x_0 + x_i) - coord[i]) / (kernel_width / 2), kernel_param)
+                ((x_0 + x_i) - coord[i]) / (width / 2), beta)
 
             # save interpolator
-            interp_value[i, x_i] = val
-            interp_index[i, x_i] = (x_0 + x_i) % grid_shape
+            value[i, x_i] = val
+            index[i, x_i] = (x_0 + x_i) % shape
 
 
 class _DeGridding:
