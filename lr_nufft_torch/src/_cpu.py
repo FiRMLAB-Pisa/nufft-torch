@@ -18,6 +18,26 @@ import numba as nb
 from lr_nufft_torch.src import _common
 
 
+@nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+def _prepare_interpolator(
+        interp_value, interp_index, coord, kernel_width, kernel_param, grid_shape):
+
+    # get sizes
+    npts = coord.shape[0]
+    kernel_width = interp_index.shape[-1]
+
+    for i in nb.prange(npts):
+        x_0 = np.ceil(coord[i] - kernel_width / 2)
+
+        for x_i in range(kernel_width):
+            val = _kernel._function(
+                ((x_0 + x_i) - coord[i]) / (kernel_width / 2), kernel_param)
+
+            # save interpolator
+            interp_value[i, x_i] = val
+            interp_index[i, x_i] = (x_0 + x_i) % grid_shape
+
+
 class _DeGridding:
 
     apply: Callable
@@ -50,7 +70,7 @@ class _DeGridding:
                                 basis_adjoint)
 
         # assign
-        self.apply = _apply
+        self.__call__ = _apply
 
     @staticmethod
     def _get_callback():
@@ -180,7 +200,7 @@ class _Gridding:
                                 basis)
 
         # assign
-        self.apply = _apply
+        self.__call__ = _apply
 
     @staticmethod
     def _get_callback():

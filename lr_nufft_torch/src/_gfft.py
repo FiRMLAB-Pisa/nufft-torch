@@ -8,12 +8,22 @@ Created on Mon Nov 22 16:15:00 2021
 # pylint: disable=too-few-public-methods
 # pylint: disable=redefined-builtin
 
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Dict, Union, ModuleType
 
 import numpy as np
+import numba as nb
 
 import torch
 from torch import Tensor, device
+
+from lr_nufft_torch.src import _cpu
+
+if torch.cuda.is_available():
+    is_cuda_enabled = True
+    from lr_nufft_torch.src import _cuda
+
+else:
+    is_cuda_enabled = False
 
 
 def fft():
@@ -31,6 +41,7 @@ def prepare_nufft(coord: Tensor,
                   oversamp: Union[float, List[float], Tuple[float]] = 1.125,
                   width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
+                  sharing_width: Union[None, int] = None,
                   device: str = 'cpu') -> Dict:
     """Precompute nufft object for faster t_nufft / t_nufft_adjoint.
     Args:
@@ -46,45 +57,28 @@ def prepare_nufft(coord: Tensor,
     # get parameters
     ndim = coord.shape[-1]
 
-    if np.isscalar(width):
-        width = np.array(  # pylint: disable=no-member
-            [width] * ndim, dtype=np.int16)  # pylint: disable=no-member
-    else:
-        width = np.array(  # pylint: disable=no-member
-            width, dtype=np.int16)  # pylint: disable=no-member
+    # get arrays
+    width, shape = _scalars2arrays(ndim, width, shape)
 
-    # calculate Kaiser-Bessel beta parameter
-    beta = np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
+    # get kernel shape parameter
+    beta = _beatty_parameter(width, oversamp)
 
-    if np.isscalar(shape):
-        shape = np.array(  # pylint: disable=no-member
-            [shape] * ndim, dtype=np.int16)  # pylint: disable=no-member
-    else:
-        shape = np.array(  # pylint: disable=no-member
-            shape, dtype=np.int16)  # pylint: disable=no-member
-
-    os_shape = _util.get_oversamp_shape(shape, oversamp, ndim)
+    # get grid shape
+    grid_shape = _get_oversampled_shape(shape, oversamp, ndim)
 
     # adjust coordinates
-    coord = _util.scale_coord(coord, shape, oversamp)
+    coord = _scale_coord(coord, shape, oversamp)
 
     # compute interpolator
-    sparse_coeff = _interp.prepare_interpolator(
-        coord, os_shape, width, beta, device)
-
-    # set basis
-    if basis is not None:
-        basis = basis.to(device)
+    kernel_dict = _prepare_kernel(
+        coord, grid_shape, width, beta, device, basis, sharing_width)
 
     return {'ndim': ndim,
             'oversamp': oversamp,
             'width': width,
             'beta': beta,
-            'os_shape': os_shape,
-            'oshape': shape,
-            'sparse_coeff': sparse_coeff,
-            'device': device,
-            'basis': basis}
+            'kernel_dict': kernel_dict,
+            'device': device}
 
 
 def nufft(image: Tensor, interpolator: Dict) -> Tensor:
@@ -95,20 +89,19 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     oversamp = interpolator['oversamp']
     width = interpolator['width']
     beta = interpolator['beta']
-    sparse_coeff = interpolator['sparse_coeff']
+    kernel_dict = interpolator['kernel_dict']
     device = interpolator['device']
 
     # Copy input to avoid original data modification
     image = image.clone()
 
-    # Original device
-    odevice = image.device
-
     # Offload to computational device
-    image = image.to(device)
+    dispatcher = DeviceDispatch(
+        computation_device=device, data_device=image.device)
+    image = dispatcher.dispatch(image)
 
     # Apodize
-    Apodize(ndim, oversamp, width, beta)(image)
+    Apodize(ndim, oversamp, width, beta, device)(image)
 
     # Zero-pad
     image = ZeroPad(oversamp, image.shape[-ndim:])(image)
@@ -117,10 +110,10 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     kdata = FFT()(image, axes=range(-ndim, 0), norm='ortho')
 
     # Interpolate
-    kdata = DeGrid(sparse_coeff)(image)
+    kdata = DeGrid(device)(image, kernel_dict)
 
     # Bring back to original device
-    kdata = kdata.to(odevice)
+    kdata, image = dispatcher.gather(kdata, image)
 
     return kdata
 
@@ -133,17 +126,16 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     oversamp = interpolator['oversamp']
     width = interpolator['width']
     beta = interpolator['beta']
-    sparse_coeff = interpolator['sparse_coeff']
+    kernel_dict = interpolator['kernel_dict']
     device = interpolator['device']
 
-    # Original device
-    odevice = kdata.device
-
     # Offload to computational device
-    kdata = kdata.to(device)
+    dispatcher = DeviceDispatch(
+        computation_device=device, data_device=kdata.device)
+    kdata = dispatcher.dispatch(device)
 
     # Gridding
-    kdata = Grid(sparse_coeff)(kdata)
+    kdata = Grid(device)(kdata, kernel_dict)
 
     # IFFT
     image = IFFT()(kdata, axes=range(-ndim, 0), norm='ortho')
@@ -152,11 +144,10 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     image = Crop(oversamp, image.shape[:-ndim])(image)
 
     # Apodize
-    Apodize(ndim, oversamp, width, beta)(image)
+    Apodize(ndim, oversamp, width, beta, device)(image)
 
     # Bring back to original device
-    kdata = kdata.to(odevice)
-    image = image.to(odevice)
+    image, kdata = dispatcher.gather(image, kdata)
 
     return image
 
@@ -295,7 +286,85 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
 
 #     return image
 
+class Utils:
+    """Miscellaneous utility functions."""
+    
+    @staticmethod
+    def _get_oversampled_shape(oversamp: float, shape:  Union[List[int], Tuple[int]]) -> Tuple[int]:
+        return [np.ceil(oversamp * axis).astype(int) for axis in shape]
+    
+    @staticmethod
+    def _scalars2arrays(ndim, *inputs):
+        arrays = []
+        
+        for input in inputs:
+            if np.isscalar(input):
+                arrays.append(np.array([input] * ndim, dtype=np.int16))
+            else:
+                arrays.append(np.array(input, dtype=np.int16))
+    
+        return arrays
+    
+    @staticmethod
+    def _beatty_parameter(width, oversamp):
+        return np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
+    
+    @staticmethod
+    def _scale_coord(coord, shape, oversamp):
+        ndim = coord.shape[-1]
+        coord = coord.clone()
+        
+        for i in range(-ndim, 0):
+            scale = np.ceil(oversamp * shape[i]) / shape[i]
+            shift = np.ceil(oversamp * shape[i]) // 2
+            coord[..., i] *= scale
+            coord[..., i] += shift
+    
+        return coord
+    
+    
+class InterpolatorFactory:
+    """Functions to prepare NUFFT operator."""
+    
+    def __call__(self, coord, shape, width, beta, device, basis, sharing_width):
+        pass        
+    
+    def _prepare_sparse_coefficient_matrix(self, value, index, coord, width, beta, shape):
+        for i in range(self.ndim):
+            _cpu.prepare_sparse_coefficient_matrix(value[i], index[i], coord[i], width[i], beta[i], shape[i])
+        
+    def _parse_coordinate_size(self, coord, width):  
+        # inspect input coordinates
+        self.nframes = coord.shape[0]
+        pts_shape = coord.shape[1:-1]
+        self.ndim = coord.shape[-1]
 
+        # calculate total number of point per frame and total number of points
+        self.npts = np.prod(pts_shape)
+        self.coord_length = self.nframes*self.npts
+        
+    def _reformat_coordinates(self, coord):
+        return coord.reshape([self.coord_length, self.ndim]).T
+    
+    def _reformat_sparse_coefficients(self):
+        pass
+    
+    def _preallocate_sparse_coefficient_matrix(self, width):
+        index = []
+        value = []
+    
+        for i in range(self.ndim):
+            # kernel value
+            empty_value = np.zeros((self.coord_length, width[i]), dtype=np.float32)
+            value.append(empty_value)  
+            
+            # kernel index
+            empty_index = np.zeros((self.coord_length, width[i]), dtype=np.int32)
+            index.append(empty_index)
+            
+        return value, index
+                
+    
 class DeviceDispatch:
     """Manage computational devices."""
 
@@ -327,23 +396,34 @@ class DeviceDispatch:
 
 class DataReshape:
     """Ravel and unravel multi-channel/-echo/-slice sparse k-space data."""
+    ndim: int
     batch_shape: Union[List[int], Tuple[int]]
     batch_size: int
-    nframes: int
+    grid_shape:  Union[List[int], Tuple[int]]
+    grid_size: int
     batch_axis_shape: Union[None, List[int], Tuple[int]]
+    nbatches: int
+    nframes: int
+    device: Union[str, device]
+    dtype: torch.dtype
 
-    def __init__(self, coord_shape: Union[List[int], Tuple[int]]):
+    def __init__(self,
+                 coord_shape: Union[List[int], Tuple[int]],
+                 grid_shape: Union[List[int], Tuple[int]]):
         """DataReshape object constructor.
 
         Args:
             coord_shape: shape of k-space coordinates tensor.
 
         """
+        self.ndim = coord_shape[-1]
         self.batch_shape = coord_shape[1:-1]
         self.batch_size = np.prod(self.batch_shape)
+        self.grid_shape = grid_shape
+        self.grid_size = np.prod(self.grid_shape)
         self.nframes = coord_shape[0]
 
-    def ravel(self, input: Tensor) -> Tensor:
+    def ravel_data(self, input: Tensor) -> Tensor:
         """Ravel multi-channel/-echo/-slice data.
 
         Args:
@@ -359,42 +439,17 @@ class DataReshape:
             tensor: output 3D raveled data tensor of shape
                     (n_frames, n_batches, n_spectral_locations).
         """
+        # get input device and data type
+        self.device = input.device
+        self.dtype = input.dtype
+
         # keep original batch shape
         self.batch_axis_shape = input.shape[1:-len(self.batch_shape)]
-        nbatches = np.prod(self.batch_axis_shape)
+        self.nbatches = np.prod(self.batch_axis_shape)
 
-        return input.reshape(self.nframes, nbatches, self.batch_size)
+        return input.reshape(self.nframes, self.nbatches, self.batch_size)
 
-    def unravel(self, input: Tensor) -> Tensor:
-        """Unavel raveled data, restoring original shape.
-
-        Args:
-            input (tensor): input 3D raveled data tensor  of shape
-                            (n_frames, n_batches, n_spectral_locations).
-
-        Returns:
-            tensor: output original-shape data.
-        """
-        return input.reshape(self.nframes, *self.batch_axis_shape, *self.batch_shape)
-
-
-class GriddedReshape:
-    """Ravel and unravel multi-channel/-echo/-slice gridded k-space data."""
-    ndim: int
-    batch_axis_shape: Union[None, List[int], Tuple[int]]
-
-    def __init__(self, coord_shape: Union[List[int], Tuple[int]]):
-        """GriddedReshape object constructor.
-
-        Args:
-            coord_shape: shape of k-space coordinates tensor.
-
-        """
-        self.ndim = coord_shape[-1]
-        self.nframes = coord_shape[0]
-        self.grid_shape: Union[List[int], Tuple[int]]
-
-    def ravel(self, input: Tensor) -> Tensor:
+    def ravel_grid(self, input: Tensor) -> Tensor:
         """Ravel multi-channel/-echo/-slice data.
 
         Args:
@@ -412,14 +467,11 @@ class GriddedReshape:
         """
         # keep original batch shape
         self.batch_axis_shape = input.shape[1:-self.ndim]
-        self.grid_shape = input.shape[-self.ndim:]
+        self.nbatches = np.prod(self.batch_axis_shape)
 
-        nbatches = np.prod(self.batch_axis_shape)
-        batch_size = np.prod(self.grid_shape)
+        return input.reshape(input.shape[0], self.nbatches, self.grid_size)
 
-        return input.reshape(self.nframes, nbatches, batch_size)
-
-    def unravel(self, input: Tensor) -> Tensor:
+    def unravel_data(self, input: Tensor) -> Tensor:
         """Unavel raveled data, restoring original shape.
 
         Args:
@@ -429,7 +481,34 @@ class GriddedReshape:
         Returns:
             tensor: output original-shape data.
         """
-        return input.reshape(self.nframes, *self.batch_axis_shape, *self.grid_shape)
+        return input.reshape(self.nframes, *self.batch_axis_shape, *self.batch_shape)
+
+    def unravel_grid(self, input: Tensor) -> Tensor:
+        """Unavel raveled data, restoring original shape.
+
+        Args:
+            input (tensor): input 3D raveled data tensor  of shape
+                            (n_frames, n_batches, n_spectral_locations).
+
+        Returns:
+            tensor: output original-shape data.
+        """
+        return input.reshape(input.shape[0], *self.batch_axis_shape, *self.grid_shape)
+
+    def generate_empty_data(self):
+        """Generate empty Non-Cartesian data matrix."""
+        return torch.zeros((self.nframes, self.nbatches, self.batch_size),
+                           dtype=self.dtype, device=self.device)
+
+    def generate_empty_grid(self, basis: Union[None, Tensor] = None):
+        """Generate empty Cartesian data matrix."""
+        if basis is None:
+            return torch.zeros((self.nframes, self.nbatches, self.grid_size),
+                               dtype=self.dtype, device=self.device)
+        else:
+            ncoeff = basis.shape[0]
+            return torch.zeros((ncoeff, self.nbatches, self.grid_size),
+                               dtype=self.dtype, device=self.device)
 
 
 class Apodize:
@@ -454,7 +533,8 @@ class Apodize:
             idx = torch.arange(i, dtype=torch.float32, device=device)
 
             # Calculate apodization
-            apod = (beta[axis]**2 - (np.pi * width[axis] * (idx - i // 2) / os_i)**2)**0.5
+            apod = (beta[axis]**2 - (np.pi * width[axis]
+                    * (idx - i // 2) / os_i)**2)**0.5
             apod /= torch.sinh(apod)
             self.apod.append(apod.reshape([i] + [1] * (-axis - 1)))
 
@@ -468,17 +548,13 @@ class Apodize:
             input *= self.apod[axis]
 
 
-def _get_oversampled_shape(oversamp: float, shape:  Union[List[int], Tuple[int]]) -> Tuple[int]:
-    return [np.ceil(oversamp * axis).astype(int) for axis in shape]
-
-
 class ZeroPad:
     """ Image-domain padding operator to interpolate k-space on oversampled grid."""
     padsize: Tuple[int]
 
     def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]):
         # get oversampled shape
-        oshape = _get_oversampled_shape(oversamp, shape)
+        oshape = Utils._get_oversampled_shape(oversamp, shape)
 
         # get pad size
         padsize = [(oshape[axis] - shape[axis]) //
@@ -500,15 +576,15 @@ class ZeroPad:
             tensor: Output zero-padded image.
         """
         return torch.nn.functional.pad(input, self.padsize, mode="constat", value=0)
-    
-    
+
+
 class Crop:
     """Image-domain cropping operator to select targeted FOV."""
     cropsize: Tuple[int]
 
     def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]):
         # get oversampled shape
-        oshape = _get_oversampled_shape(oversamp, shape)
+        oshape = Utils._get_oversampled_shape(oversamp, shape)
 
         # get crop size
         cropsize = [(shape[axis] - oshape[axis]) //
@@ -530,17 +606,62 @@ class Crop:
             tensor: Output zero-padded image.
         """
         return torch.nn.functional.pad(input, self.cropsize)
- 
+
+
+class BaseFFT:
+    """Cartesian (Inverse) Fourier Transform."""
     
-def _normalize_axes(axes, ndim):
-    if axes is None:
-        return tuple(range(ndim))
-    else:
-        return tuple(a % ndim for a in sorted(axes))
+    @staticmethod
+    def _normalize_axes(axes, ndim):
+        if axes is None:
+            return tuple(range(ndim))
+        else:
+            return tuple(a % ndim for a in sorted(axes))
+
+    @staticmethod
+    def _fftc(input, oshape=None, axes=None, norm='ortho'):
+
+        # adapt output shape
+        if oshape is None:
+            oshape = input.shape
+        else:
+            oshape = (*input.shape[:-len(oshape)], *oshape)
+
+        # process axes arg
+        ndim = input.ndim
+        axes = BaseFFT._normalize_axes(axes, ndim)
+
+        # actual fft
+        tmp = torch.fft.ifftshift(input, dim=axes)
+        tmp = torch.fft.fftn(tmp, s=oshape, dim=axes, norm=norm)
+        output = torch.fft.fftshift(tmp, dim=axes)
+
+        return output
     
-class FFT:
+    @staticmethod
+    def _ifftc(input, oshape=None, axes=None, norm='ortho'):
+
+        # adapt output shape
+        if oshape is None:
+            oshape = input.shape
+        else:
+            oshape = (*input.shape[:-len(oshape)], *oshape)
+
+        # process axes arg
+        ndim = input.ndim
+        axes = BaseFFT._normalize_axes(axes, ndim)
+
+        # actual fft
+        tmp = torch.fft.ifftshift(input, dim=axes)
+        tmp = torch.fft.ifftn(tmp, s=oshape, dim=axes, norm=norm)
+        output = torch.fft.fftshift(tmp, dim=axes)
+
+        return output
+    
+
+class FFT(BaseFFT):
     """Cartesian Fourier Transform."""
-    
+
     def __call__(input, oshape=None, axes=None, center=True, norm='ortho'):
         # allow for single scalar axis
         if np.isscalar(axes):
@@ -550,7 +671,7 @@ class FFT:
         axes = list(axes)
 
         if center:
-            output = FFT._fftc(input, oshape=oshape, axes=axes, norm=norm)
+            output = BaseFFT._fftc(input, oshape=oshape, axes=axes, norm=norm)
         else:
             output = torch.fft.fftn(input, s=oshape, dim=axes, norm=norm)
 
@@ -559,29 +680,10 @@ class FFT:
 
         return output
 
-    @staticmethod
-    def _fftc(input, oshape=None, axes=None, norm='ortho'):
-        
-        # adapt output shape
-        if oshape is None:
-            oshape = input.shape
-        else:
-            oshape = (*input.shape[:-len(oshape)], *oshape)
 
-        # process axes arg
-        ndim = input.ndim
-        axes = _normalize_axes(axes, ndim)
-
-        # actual fft
-        tmp = torch.fft.ifftshift(input, dim=axes)
-        tmp = torch.fft.fftn(tmp, s=oshape, dim=axes, norm=norm)
-        output = torch.fft.fftshift(tmp, dim=axes)
-
-        return output
-
-class IFFT:
+class IFFT(BaseFFT):
     """Cartesian Inverse Fourier Transform."""
-    
+
     def __call__(input, oshape=None, axes=None, center=True, norm='ortho'):
         # allow for single scalar axis
         if np.isscalar(axes):
@@ -591,7 +693,7 @@ class IFFT:
         axes = list(axes)
 
         if center:
-            output = IFFT._ifftc(input, oshape=oshape, axes=axes, norm=norm)
+            output = BaseFFT._ifftc(input, oshape=oshape, axes=axes, norm=norm)
         else:
             output = torch.fft.ifftn(input, s=oshape, dim=axes, norm=norm)
 
@@ -599,50 +701,69 @@ class IFFT:
             output = output.to(input.dtype, copy=False)
 
         return output
-
+    
+class BackendBridge:
+    
     @staticmethod
-    def _ifftc(input, oshape=None, axes=None, norm='ortho'):
-        
-        # adapt output shape
-        if oshape is None:
-            oshape = input.shape
-        else:
-            oshape = (*input.shape[:-len(oshape)], *oshape)
-
-        # process axes arg
-        ndim = input.ndim
-        axes = _normalize_axes(axes, ndim)
-
-        # actual fft
-        tmp = torch.fft.ifftshift(input, dim=axes)
-        tmp = torch.fft.ifftn(tmp, s=oshape, dim=axes, norm=norm)
-        output = torch.fft.fftshift(tmp, dim=axes)
-
-        return output
-
-class Grid:
-    """K-space data gridding and de-gridding operator."""
-
-    def __init__(self, kernel_dict: Dict):
-        pass
-
-    def __call__(self, input: Tensor) -> Tensor:
-        """Grid sparse k-space data on a Cartesian Grid.
-
+    def numba2pytorch(*arrays, requires_grad=True):  # pragma: no cover
+        """Zero-copy conversion from Numpy/Numba CUDA array to PyTorch tensor.
+    
         Args:
-            input (tensor): Cartesian k-space data.
-
+            arrays (numpy/cupy array): list or tuple of input.
+            requires_grad(bool): Set .requires_grad output tensor
+    
         Returns:
-            tensor: Non-Cartesian sparse k-space data.
+            PyTorch tensor.
         """
-        pass
+        is_cuda = nb.cuda.is_cuda_array(arrays[0])
+    
+        if is_cuda:
+            tensors = [torch.as_tensor(array, device="cuda") for array in arrays]
+        else:
+            tensors = [torch.from_numpy(array) for array in arrays]
+    
+        for tensor in tensors:
+            tensor.requires_grad = requires_grad
+            tensor = tensor.contiguous()
+    
+        return tuple(tensors)
+    
+    @staticmethod
+    def pytorch2numba(*tensors):  # pragma: no cover
+        """Zero-copy conversion from PyTorch tensor to Numpy/Numba CUDA array.
+    
+        Args:
+            tensor (PyTorch tensor): input.
+    
+        Returns:
+            Numpy/Numba CUDA array.
+    
+        """
+        device = tensors[0].device
+    
+        if device.type == 'cpu':
+            arrays = [tensor.detach().contiguous().numpy() for tensor in tensors]
+        else:
+            arrays = [nb.cuda.as_cuda_array(tensor.contiguous())
+                      for tensor in tensors]
+    
+        return arrays
+
 
 class DeGrid:
-    
-    def __init__(self, kernel_dict: Dict):
-        pass
-    
-    def __call__(self, input: Tensor) -> Tensor:
+    """K-space data de-gridding operator."""
+    device: Union[str, device]
+    module: ModuleType
+
+    def __init__(self, device: Union[str, device]):
+        self.device = device
+
+        if device == 'cpu' or device == torch.device('cpu'):
+            self.module = _cpu
+        else:
+            self.module = _cuda
+
+    def __call__(self, input: Tensor, kernel_dict: Dict) -> Tensor:
         """Interpolate Cartesian k-space data to given coordinates.
 
         Args:
@@ -651,4 +772,79 @@ class DeGrid:
         Returns:
             tensor: Output Cartesian k-space data.
         """
-        pass
+        # unpack input
+        sparse_coeff = kernel_dict['sparse_coeff']
+        coord_shape = kernel_dict['coord_shape']
+        grid_shape = kernel_dict['grid_shape']
+        basis_adjoint = kernel_dict['basis_adjoint']
+
+        # reformat data for computation
+        reformat = DataReshape(coord_shape, grid_shape)
+        input = reformat.ravel_data(input)
+
+        # preallocate output data
+        output = reformat.generate_empty_data()
+
+        # do actual interpolation
+        output, input = BackendBridge.pytorch2numba(output, input)
+        self.module._DeGridding(sparse_coeff, basis_adjoint)(output, input)
+        output, input = BackendBridge.numba2pytorch(output, input)
+
+        # reformat for output
+        output = reformat.unravel_data(output)
+
+        # restore original shape
+        input = reformat.unravel_grid(input)
+
+        return output
+
+
+class Grid:
+    """K-space data gridding operator."""
+    device: Union[str, device]
+    module: ModuleType
+
+    def __init__(self, device: Union[str, device]):
+        self.device = device
+
+        if device == 'cpu' or device == torch.device('cpu'):
+            self.module = _cpu
+        else:
+            self.module = _cuda
+
+    def __call__(self, input: Tensor, kernel_dict: Dict) -> Tensor:
+        """Grid sparse k-space data on a Cartesian Grid.
+
+        Args:
+            input (tensor): Cartesian k-space data.
+
+        Returns:
+            tensor: Non-Cartesian sparse k-space data.
+        """
+        # unpack input
+        sparse_coeff = kernel_dict['sparse_coeff']
+        coord_shape = kernel_dict['coord_shape']
+        grid_shape = kernel_dict['grid_shape']
+        basis = kernel_dict['basis']
+        sharing_width = kernel_dict['sharing_width']
+
+        # reformat data for computation
+        reformat = DataReshape(coord_shape, grid_shape)
+        input = reformat.ravel_data(input)
+
+        # preallocate output data
+        output = reformat.generate_empty_grid(basis)
+
+        # do actual interpolation
+        output, input = BackendBridge.pytorch2numba(output, input)
+        self.module._Gridding(sparse_coeff, basis,
+                              sharing_width)(output, input)
+        output, input = BackendBridge.numba2pytorch(output, input)
+
+        # reformat for output
+        output = reformat.unravel_grid(output)
+
+        # restore original shape
+        input = reformat.unravel_data(input)
+
+        return output

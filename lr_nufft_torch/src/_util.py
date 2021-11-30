@@ -79,14 +79,14 @@ def scale_coord(coord: Tensor,
         
     """
     ndim = coord.shape[-1]
-    output = coord.clone()
+    coord = coord.clone()
     for i in range(-ndim, 0):
         scale = np.ceil(oversamp * shape[i]) / shape[i]
         shift = np.ceil(oversamp * shape[i]) // 2
-        output[..., i] *= scale
-        output[..., i] += shift
+        coord[..., i] *= scale
+        coord[..., i] += shift
 
-    return output
+    return coord
 
 
 def get_oversamp_shape(shape: Union[List[int], Tuple[int]],
