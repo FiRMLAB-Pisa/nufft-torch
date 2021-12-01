@@ -5,10 +5,32 @@ Factory routines to build NUFFT/Toeplitz objects.
 @author: Matteo Cencini
 """
 # pylint: disable=no-member
+# pylint: disable=attribute-defined-outside-init
+# pylint: disable=unbalanced-tuple-unpacking
+# pylint: disable=too-few-public-methods
+# pylint: disable=too-many-arguments
+# pylint: disable=no-self-use
+# pylint: disable=too-many-locals
+# pylint: disable=line-too-long
+
+import numpy as np
+import torch
+
+from lr_nufft_torch.src import _cpu
+from lr_nufft_torch.src._subroutines import (Apodize,
+                                             BackendBridge,
+                                             Crop,
+                                             FFT,
+                                             Grid,
+                                             IFFT,
+                                             Sparse2Dense,
+                                             Utils,
+                                             ZeroPad)
+
 
 class AbstractFactory:
     """Base class for NUFFT and Toeplitz factory classes."""
-    
+
     def _parse_coordinate_size(self, coord):
 
         # inspect input coordinates
@@ -27,7 +49,7 @@ class AbstractFactory:
 class NUFFTFactory(AbstractFactory):
     """Functions to prepare NUFFT operator."""
 
-    def __call__(self, coord, shape, width, oversamp, basis, sharing_width, device):
+    def __call__(self, coord, shape, width, oversamp, basis, sharing_width, device, threadsperblock):
         """Actual pre-computation routine."""
 
         # get parameters
@@ -40,7 +62,7 @@ class NUFFTFactory(AbstractFactory):
         beta = Utils._beatty_parameter(width, oversamp)
 
         # get grid shape
-        grid_shape = Utils._get_oversampled_shape(shape, oversamp, ndim)
+        grid_shape = Utils._get_oversampled_shape(oversamp, shape)
 
         # adjust coordinates
         coord = Utils._scale_coord(coord, shape, oversamp)
@@ -49,13 +71,16 @@ class NUFFTFactory(AbstractFactory):
         kernel_dict = self._prepare_kernel(
             coord, grid_shape, width, beta, basis, sharing_width, device)
 
+        # device_dict
+        device_dict = {'device': device, 'threadsperblock': threadsperblock}
+
         # create interpolator dict
         interpolator = {'ndim': ndim,
                         'oversamp': oversamp,
                         'width': width,
                         'beta': beta,
                         'kernel_dict': kernel_dict,
-                        'device': device}
+                        'device_dict': device_dict}
 
         return interpolator
 
@@ -90,7 +115,7 @@ class NUFFTFactory(AbstractFactory):
                        'sharing_width': sharing_width}
 
         return kernel_dict
-    
+
     def _preallocate_sparse_coefficient_matrix(self, width):
         index = []
         value = []
@@ -118,7 +143,7 @@ class NUFFTFactory(AbstractFactory):
                 value[i], index[i])
 
     def _prepare_sparse_coefficient_matrix(self, coord, shape, width, beta, device):
-        
+
         # preallocate interpolator
         value, index = self._preallocate_sparse_coefficient_matrix(width)
 
@@ -142,9 +167,9 @@ class NUFFTFactory(AbstractFactory):
 
 class AbstractToeplitzFactory(AbstractFactory):
     """Base class for Cartesian and Non-Cartesian Factory classes."""
-    
+
     def _process_basis(self, basis, device):
-        
+
         # inspect basis to determine data type
         if basis is not None:
             self.islowrank = True
@@ -162,16 +187,16 @@ class AbstractToeplitzFactory(AbstractFactory):
 
         # if spatio-temporal basis is provided, check reality and offload to device
         if self.islowrank:
-            basis = basis.to(dtype).to(device)
+            basis = basis.to(self.dtype).to(device)
             basis_adjoint = basis.conj().T
         else:
             basis_adjoint = None
 
         return basis, basis_adjoint
-    
+
     def _preallocate_unitary_kspace_data(self, basis_adjoint, device):
 
-        if basis is not None:
+        if self.islowrank:
             # initialize temporary arrays
             ones = torch.ones((self.nframes, self.ncoeff, self.npts),
                               dtype=torch.complex64, device=device)
@@ -183,7 +208,7 @@ class AbstractToeplitzFactory(AbstractFactory):
                               dtype=torch.complex64, device=device)
 
         return ones
-    
+
     def _post_process_mtf(self, mtf):
 
         # keep only real part if basis is real
@@ -204,30 +229,43 @@ class AbstractToeplitzFactory(AbstractFactory):
         # remove NaN
         mtf = torch.nan_to_num(mtf)
 
+        # transform to numba
+        mtf = BackendBridge.pytorch2numba(mtf)
+
+        return mtf
+
 
 class CartesianToeplitzFactory(AbstractToeplitzFactory):
     """Functions to prepare Toeplitz kernel for Cartesian sampling."""
 
-    def __call__(self, sampling_mask, shape, osf, basis, sharing_width, device):
+    def __call__(self, sampling_mask, shape, osf, basis, sharing_width, device, threadsperblock):
         """Actual pre-computation routine."""
+
         # clone coordinates and dcf to avoid modifications
-        coord = coord.clone()
-        
+        sampling_mask = sampling_mask.clone()
+
         # get parameters
         ndim = sampling_mask.shape[-1]
 
         # get arrays
         shape = Utils._scalars2arrays(ndim, shape)
 
+        # device_dict
+        device_dict = {'device': device, 'threadsperblock': threadsperblock}
+
         # actual kernel precomputation
         mtf = self._prepare_kernel(
-            sampling_mask, shape, osf, basis, sharing_width, device)
+            sampling_mask, shape, osf, basis, sharing_width, device_dict)
 
-        return {'value': mtf, 'islowrank': islowrank, 'device': device}
+        # get oversampled shape for computation
+        grid_shape = Utils._get_oversampled_shape(osf, shape)
 
-    def _prepare_kernel(self, sampling_mask, shape, osf, basis, sharing_width, device):
+        return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
+                'ndim': ndim, 'grid_shape': grid_shape}
+
+    def _prepare_kernel(self, sampling_mask, shape, osf, basis, sharing_width, device_dict):
         """Core kernel computation sub-routine."""
-        
+
         # parse size
         self._parse_coordinate_size(sampling_mask)
 
@@ -235,7 +273,8 @@ class CartesianToeplitzFactory(AbstractToeplitzFactory):
         self._reformat_coordinates(sampling_mask)
 
         # calculate interpolator
-        mtf = self._prepare_coefficient_matrix(sampling_mask, shape, basis, sharing_width, device)
+        mtf = self._prepare_coefficient_matrix(
+            sampling_mask, shape, basis, sharing_width, device_dict)
 
         # resample mtf
         mtf = self._resample_mtf(mtf, osf)
@@ -245,20 +284,23 @@ class CartesianToeplitzFactory(AbstractToeplitzFactory):
 
         return mtf
 
-    def _prepare_coefficient_matrix(self, sampling_mask, shape, basis, sharing_width, device):
+    def _prepare_coefficient_matrix(self, sampling_mask, shape, basis, sharing_width, device_dict):
         # process basis
-        basis, basis_adjoint = self._process_basis(basis, device)
+        basis, basis_adjoint = self._process_basis(
+            basis, device_dict['device'])
 
         # prepare unitary data for MTF/PSF estimation
-        ones = self._preallocate_unitary_kspace_data(basis_adjoint, device)
+        ones = self._preallocate_unitary_kspace_data(
+            basis_adjoint, device_dict['device'])
 
         # modulation transfer function
-        mtf = self._sparse2dense(ones, sampling_mask, shape, basis, sharing_width, device)
+        mtf = self._sparse2dense(
+            ones, sampling_mask, shape, basis, sharing_width, device_dict)
 
         return mtf
 
-    def _sparse2dense(self, ones, sampling_mask, shape, basis, sharing_width, device):
-        pass
+    def _sparse2dense(self, ones, sampling_mask, shape, basis, sharing_width, device_dict):
+        return Sparse2Dense(device_dict)(ones, sampling_mask, shape, basis, sharing_width)
 
     def _resample_mtf(self, mtf, osf):
 
@@ -266,7 +308,7 @@ class CartesianToeplitzFactory(AbstractToeplitzFactory):
         psf = IFFT()(mtf, axes=range(-self.ndim, 0), norm='ortho')
 
         # Zero-pad
-        psf = ZeroPad(osf, image.shape[-ndim:])(image)
+        psf = ZeroPad(osf, psf.shape[-self.ndim:])(psf)
 
         # FFT
         mtf = FFT()(psf, axes=range(-self.ndim, 0), norm='ortho')
@@ -277,12 +319,12 @@ class CartesianToeplitzFactory(AbstractToeplitzFactory):
 class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
     """Functions to prepare Toeplitz kernel for Non-Cartesian sampling."""
 
-    def __call__(self, coord, shape, prep_osf, comp_osf, width, oversamp, basis, sharing_width, device, dcf):
+    def __call__(self, coord, shape, prep_osf, comp_osf, width,
+                 basis, sharing_width, device, threadsperblock, dcf):
         """Actual pre-computation routine."""
         # clone coordinates and dcf to avoid modifications
         coord = coord.clone()
-        dcf = dcf.clone()
-        
+
         # get parameters
         ndim = coord.shape[-1]
 
@@ -290,52 +332,63 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         width, shape = Utils._scalars2arrays(ndim, width, shape)
 
         # get kernel shape parameter
-        beta = Utils._beatty_parameter(width, oversamp)
+        beta = Utils._beatty_parameter(width, prep_osf)
 
-        # get grid shape
-        grid_shape = Utils._get_oversampled_shape(shape, oversamp, ndim)
+        # get grid shape for preparation
+        grid_shape = Utils._get_oversampled_shape(shape, prep_osf)
 
         # adjust coordinates
-        coord = Utils._scale_coord(coord, shape, oversamp)
+        coord = Utils._scale_coord(coord, shape, prep_osf)
+
+        # device_dict
+        device_dict = {'device': device, 'threadsperblock': threadsperblock}
 
         # actual kernel precomputation
         mtf = self._prepare_kernel(
-            coord, shape, prep_osf, comp_osf, width, beta, basis, sharing_width, device, dcf)
+            coord, grid_shape, prep_osf, comp_osf, width, beta, basis, sharing_width, device_dict, dcf)
 
-        return {'value': mtf, 'islowrank': islowrank, 'device': device}
+        # get grid shape for computation
+        grid_shape = Utils._get_oversampled_shape(shape, comp_osf)
 
-    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, sharing_width, device, dcf):
+        return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
+                'ndim': ndim, 'grid_shape': grid_shape}
+
+    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, sharing_width, device_dict, dcf):
         """Core kernel computation sub-routine."""
         # parse size
-        self._parse_coordinate_size(coord, width)
+        self._parse_coordinate_size(coord)
 
         # reformat coordinates
         self._reformat_coordinates(coord)
 
         # calculate interpolator
         mtf = self._prepare_coefficient_matrix(
-            coord, shape, prep_osf, width, beta, device)
+            coord, shape, prep_osf, width, basis, sharing_width, device_dict, dcf)
 
         # resample mtf
-        mtf = self._resample_mtf(mtf, prep_osf, comp_osf, width, beta, device)
+        mtf = self._resample_mtf(
+            mtf, prep_osf, comp_osf, width, beta, device_dict['device'])
 
         # post process mtf
         mtf = self._post_process(mtf)
 
         return mtf
 
-    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, beta, basis, sharing_width, device, dcf):
+    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, basis, sharing_width, device_dict, dcf):
         # process basis
-        basis, basis_adjoint = self._process_basis(basis, device)
+        basis, basis_adjoint = self._process_basis(
+            basis, device_dict['device'])
 
         # prepare dcf
-        dcf = self._prepare_dcf(dcf, device)
+        dcf = self._prepare_dcf(dcf, device_dict['device'])
 
         # prepare unitary data for MTF/PSF estimation
-        ones = self._preallocate_unitary_kspace_data(basis_adjoint, device)
+        ones = self._preallocate_unitary_kspace_data(
+            basis_adjoint, device_dict['device'])
 
         # calculate modulation transfer function
-        mtf = self._gridding(ones, coord, shape, width, oversamp, basis, sharing_width, device)
+        mtf = self._gridding(ones, coord, shape, width,
+                             oversamp, basis, sharing_width, device_dict)
 
         return mtf
 
@@ -343,8 +396,10 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         # if dcf are not provided, assume uniform sampling density
         if dcf is None:
-            dcf = torch.ones((self.nframes, self.npts), torch.float32, device=device)
+            dcf = torch.ones((self.nframes, self.npts),
+                             torch.float32, device=device)
         else:
+            dcf = dcf.clone()
             dcf = dcf.to(device)
 
         if dcf.ndim > 1 and not self.islowrank:
@@ -358,7 +413,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
                                     basis, sharing_width, device)
 
         # compute mtf
-        return Grid(device)(ones, interpolator['kernel_dict'])
+        return Grid(device)(ones, nufft_dict['kernel_dict'])
 
     def _resample_mtf(self, mtf, prep_osf, comp_osf, width, beta, device):
 
@@ -372,7 +427,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         Apodize(self.ndim, prep_osf, width, beta, device)(psf)
 
         # Zero-pad
-        psf = ZeroPad(comp_osf, image.shape[-ndim:])(image)
+        psf = ZeroPad(comp_osf, psf.shape[-self.ndim:])(psf)
 
         # FFT
         mtf = FFT()(psf, axes=range(-self.ndim, 0), norm='ortho')

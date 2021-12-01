@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Common routines for both CPU- and CUDA-based interpolation/gridding.
+Common subroutines for CPU- and CUDA-based interpolation/gridding.
 
 @author: Matteo Cencini
 """
@@ -40,6 +40,32 @@ class _iterator:
         frame = min(frame, nframes)
 
         return frame
+
+
+class _mask:
+
+    @staticmethod
+    def _ravel_index(sampling_mask, grid_shape: Tuple[int], sample_index: int, frame: int) -> int:
+
+        index_row = sampling_mask[frame][sample_index]
+        index = index_row[0]
+
+        for i in range(1, index_row.shape[0]):
+            index += index_row[i] * grid_shape[i-1]
+
+        return index
+
+    @staticmethod
+    def _evaluate(frame: int, sample_index: int, sampling_tuple: [Tuple[int], Tuple[int]]) -> int:
+
+        # unpack mask tuple
+        sampling_mask, grid_shape = sampling_tuple
+
+        # get flattened neighbour index
+        index = _mask._ravel_index(
+            sampling_mask, grid_shape, sample_index, frame)
+
+        return index
 
 
 class _kernel:
@@ -85,6 +111,40 @@ class _kernel:
         return value, index
 
 
+class _sample:
+
+    @staticmethod
+    def _data(data_out, data_in, index_tuple):
+        # unpack indexes
+        batch, frame, index_out, index_in = index_tuple
+
+        # get output and input locations
+        idx_out = (frame, batch, index_out)
+        idx_in = (frame, batch, index_in)
+
+        # update data
+        data_out[idx_out] += data_in[idx_in]
+
+    @staticmethod
+    def _data_lowrank(data_out, data_in, index_tuple, basis_adjoint, ncoeff):
+        # unpack indexes
+        frame, batch, index_out, index_in = index_tuple
+
+        # get output locations
+        idx_out = (frame, batch, index_out)
+
+        # iterate over subspace coefficients
+        for coeff in range(ncoeff):
+            # get input locations
+            idx_in = (frame, batch, index_in)
+
+            # get total weight
+            weight = basis_adjoint[frame, coeff]
+
+            # update data
+            data_out[idx_out] += weight * data_in[idx_in]
+
+
 class _gather:
 
     @staticmethod
@@ -117,3 +177,13 @@ class _gather:
 
             # update data
             data_out[idx_out] += weight * data_in[idx_in]
+
+
+def _dot_product(out, in_a, in_b):
+    row, col = in_a.shape
+
+    for j in range(col):
+        for i in range(row):
+            out[j] += in_a[i][j] * in_b[j]
+
+    return out

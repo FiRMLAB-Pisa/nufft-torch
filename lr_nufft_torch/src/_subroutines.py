@@ -7,158 +7,23 @@ Private subroutines for FFT and NUFFT.
 # pylint: disable=no-member
 # pylint: disable=too-few-public-methods
 # pylint: disable=redefined-builtin
+# pylint: disable=too-many-instance-attributes
+# pylint: disable=too-many-arguments
+# pylint: disable=line-too-long
 
-from typing import List, Tuple, Dict, Union, ModuleType
+from typing import List, Tuple, Dict, Union
 
 import numpy as np
 import numba as nb
 
 import torch
-from torch import Tensor, device
+from torch import Tensor
 
 from lr_nufft_torch.src import _cpu
 
 if torch.cuda.is_available():
-    is_cuda_enabled = True
     from lr_nufft_torch.src import _cuda
 
-else:
-    is_cuda_enabled = False
-
-
-# def prepare_nufft_selfadjoint(coord: Tensor,
-#                      shape: Union[int, List[int], Tuple[int]],
-#                      oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-#                      width: Union[int, List[int], Tuple[int]] = 3,
-#                      basis: Tensor = None,
-#                      device: str = 'cpu',
-#                      dcf: Tensor = None) -> Dict:
-#     """Compute spatio-temporal kernel for fast self-adjoint operation.
-#     Args:
-#         coord (tensor): Coordinate array of shape [nframes, ..., ndim]
-#         shape (list or tuple of ints): Overesampled grid size.
-#         width (list or tuple of int): Interpolation kernel full-width.
-#         beta (list or tuple of floats): Kaiser-Bessel beta parameter.
-#         device (str): identifier of computational device used for interpolation.
-#         basis (tensor): low-rank temporal subspace basis.
-#         dcf (tensor): k-space sampling density compensation weights.
-
-#     Returns:
-#         toeplitz (tensor): Fourier transform of system transfer Point Spread Function
-#                            (spatiotemporal kernel)
-#     """
-#     # get initial data shape
-#     nframes = coord.shape[0]
-#     pts_shape = coord.shape[1:-1]
-#     npts = _util.prod(pts_shape)
-#     ndim = coord.shape[-1]
-
-#     # reshape input
-#     coord = coord.reshape([nframes, npts, ndim])
-
-#     if np.isscalar(width):
-#         width = np.array(  # pylint: disable=no-member
-#             [width] * ndim, dtype=np.int16)  # pylint: disable=no-member
-#     else:
-#         width = np.array(  # pylint: disable=no-member
-#             width, dtype=np.int16)  # pylint: disable=no-member
-
-#     # calculate Kaiser-Bessel beta parameter
-#     beta = np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
-
-#     if np.isscalar(shape):
-#         shape = np.array(  # pylint: disable=no-member
-#             [shape] * ndim, dtype=np.int16)  # pylint: disable=no-member
-#     else:
-#         shape = np.array(  # pylint: disable=no-member
-#             shape, dtype=np.int16)  # pylint: disable=no-member
-
-#     # get oversampled grid
-#     os_shape = _util.get_oversamp_shape(shape, oversamp, ndim)
-
-#     # scale coordinates
-#     coord = _util.scale_coord(coord, shape, oversamp)
-
-#     # actual kernel precomputation
-#     kernel = _interp.prepare_toeplitz(coord,
-#                                       os_shape,
-#                                       width=width,
-#                                       beta=beta,
-#                                       basis=basis,
-#                                       device=device,
-#                                       dcf=dcf)
-
-#     return {'kernel': kernel, 'oversamp': oversamp, 'ndim': ndim, 'device': device}
-
-
-# def nufft_selfadjoint(image: Tensor, toeplitz: Dict) -> Tensor:
-#     """Perform in-place fast self-adjoint by convolution with spatio-temporal kernel matrix.
-
-#     Args:
-#         data_in (tensor): Input image.
-#         toeplitz (dict): Pre-computed spatio-temporal kernel.
-
-#     Returns
-#         data_out (tensor): Output image.
-
-#     """
-#     # unpack input
-#     toeplitz_kernel = toeplitz['kernel']
-#     oversamp = toeplitz['oversamp']
-#     ndim = toeplitz['ndim']
-#     islowrank = toeplitz_kernel['islowrank']
-#     device = toeplitz['device']
-
-#     # Original device
-#     odevice = image.device
-
-#     # Offload to computational device
-#     image = image.to(device)
-
-#     ishape = list(image.shape)
-#     image = image.reshape(
-#         [ishape[0], _util.prod(ishape[1:-ndim]), *ishape[-ndim:]])
-
-#     # Get oversampled shape
-#     shape = list(image.shape)
-#     os_shape = _util.get_oversamp_shape(shape, oversamp, ndim)
-
-#     # Zero-pad
-#     image = _util.resize(image, os_shape)
-
-#     # FFT
-#     data_in = fft(image, axes=range(-ndim, 0), center=False, norm=None)
-
-#     # Reshape input
-#     if islowrank is True:
-#         data_in = data_in.reshape(
-#             [shape[0], shape[1], _util.prod(os_shape[-ndim:])])
-
-#     # Preallocate output
-#     data_out = torch.zeros(  # pylint: disable=no-member
-#         data_in.shape, dtype=data_in.dtype, device=data_in.device)
-
-#     # Perform convolution
-#     _interp.toeplitz(data_out, data_in, toeplitz_kernel)
-
-#     # Reshape output
-#     if islowrank is True:
-#         data_out = data_out.reshape(os_shape)
-
-#     # IFFT
-#     image = ifft(data_out, axes=range(-ndim, 0), center=False, norm=None)
-
-#     # Crop
-#     image = _util.resize(image, shape)
-#     image = image.reshape(ishape)
-
-#     if islowrank is True:
-#         image = image[:, 0]
-
-#     # Bring back to original device
-#     image = image.to(odevice)
-
-#     return image
 
 class Utils:
     """Miscellaneous utility functions."""
@@ -197,8 +62,6 @@ class Utils:
         return coord
 
 
-
-
 class DeviceDispatch:
     """Manage computational devices."""
 
@@ -220,12 +83,18 @@ class DeviceDispatch:
     def dispatch(self, *tensors):
         """Dispatch input to computational device."""
         for tensor in tensors:
-            tensor.to(self.computation_device)
+            if tensor is not None:
+                tensor.to(self.computation_device)
+
+        return tensors
 
     def gather(self, *tensors):
         """Gather output to original device"""
         for tensor in tensors:
-            tensor.to(self.data_device)
+            if tensor is not None:
+                tensor.to(self.data_device)
+
+        return tensors
 
 
 class DataReshape:
@@ -238,7 +107,7 @@ class DataReshape:
     batch_axis_shape: Union[None, List[int], Tuple[int]]
     nbatches: int
     nframes: int
-    device: Union[str, device]
+    device: Union[str, torch.device]
     dtype: torch.dtype
 
     def __init__(self,
@@ -339,10 +208,10 @@ class DataReshape:
         if basis is None:
             return torch.zeros((self.nframes, self.nbatches, self.grid_size),
                                dtype=self.dtype, device=self.device)
-        else:
-            ncoeff = basis.shape[0]
-            return torch.zeros((ncoeff, self.nbatches, self.grid_size),
-                               dtype=self.dtype, device=self.device)
+
+        ncoeff = basis.shape[0]
+        return torch.zeros((ncoeff, self.nbatches, self.grid_size),
+                           dtype=self.dtype, device=self.device)
 
 
 class Apodize:
@@ -355,7 +224,7 @@ class Apodize:
                  oversamp: float,
                  width: Union[List[int], Tuple[int]],
                  beta: Union[List[float], Tuple[float]],
-                 device: Union[str, device]):
+                 device: Union[str, torch.device]):
 
         # get number of spatial dimensions
         self.ndim = len(grid_shape)
@@ -449,8 +318,8 @@ class BaseFFT:
     def _normalize_axes(axes, ndim):
         if axes is None:
             return tuple(range(ndim))
-        else:
-            return tuple(a % ndim for a in sorted(axes))
+
+        return tuple(a % ndim for a in sorted(axes))
 
     @staticmethod
     def _fftc(input, oshape=None, axes=None, norm='ortho'):
@@ -496,7 +365,7 @@ class BaseFFT:
 class FFT(BaseFFT):
     """Cartesian Fourier Transform."""
 
-    def __call__(input, oshape=None, axes=None, center=True, norm='ortho'):
+    def __call__(self, input, oshape=None, axes=None, center=True, norm='ortho'):
         # allow for single scalar axis
         if np.isscalar(axes):
             axes = [axes]
@@ -518,7 +387,7 @@ class FFT(BaseFFT):
 class IFFT(BaseFFT):
     """Cartesian Inverse Fourier Transform."""
 
-    def __call__(input, oshape=None, axes=None, center=True, norm='ortho'):
+    def __call__(self, input, oshape=None, axes=None, center=True, norm='ortho'):
         # allow for single scalar axis
         if np.isscalar(axes):
             axes = [axes]
@@ -538,7 +407,7 @@ class IFFT(BaseFFT):
 
 
 class BackendBridge:
-
+    """Helper class to convert between pytorch and numba."""
     @staticmethod
     def numba2pytorch(*arrays, requires_grad=True):  # pragma: no cover
         """Zero-copy conversion from Numpy/Numba CUDA array to PyTorch tensor.
@@ -589,13 +458,14 @@ class BackendBridge:
 
 class DeGrid:
     """K-space data de-gridding operator."""
-    device: Union[str, device]
-    module: ModuleType
+    device: Union[str, torch.device]
+    threadsperblock: int
 
-    def __init__(self, device: Union[str, device]):
-        self.device = device
+    def __init__(self, device_dict: Dict):
+        self.device = device_dict['device']
+        self.threadsperblock = device_dict['threadsperblock']
 
-        if device == 'cpu' or device == torch.device('cpu'):
+        if self.device == 'cpu' or self.device == torch.device('cpu'):
             self.module = _cpu
         else:
             self.module = _cuda
@@ -604,10 +474,10 @@ class DeGrid:
         """Interpolate Cartesian k-space data to given coordinates.
 
         Args:
-            input (tensor): Non-Cartesian sparse k-space data.
+            input (tensor): Cartesian sparse k-space data.
 
         Returns:
-            tensor: Output Cartesian k-space data.
+            tensor: Output Non-Cartesian k-space data.
         """
         # unpack input
         sparse_coeff = kernel_dict['sparse_coeff']
@@ -617,14 +487,15 @@ class DeGrid:
 
         # reformat data for computation
         reformat = DataReshape(coord_shape, grid_shape)
-        input = reformat.ravel_data(input)
+        input = reformat.ravel_grid(input)
 
         # preallocate output data
         output = reformat.generate_empty_data()
 
         # do actual interpolation
         output, input = BackendBridge.pytorch2numba(output, input)
-        self.module._DeGridding(sparse_coeff, basis_adjoint)(output, input)
+        self.module._DeGridding(
+            output.size, sparse_coeff, basis_adjoint, self.threadsperblock)(output, input)
         output, input = BackendBridge.numba2pytorch(output, input)
 
         # reformat for output
@@ -638,13 +509,14 @@ class DeGrid:
 
 class Grid:
     """K-space data gridding operator."""
-    device: Union[str, device]
-    module: ModuleType
+    device: Union[str, torch.device]
+    threadsperblock: int
 
-    def __init__(self, device: Union[str, device]):
-        self.device = device
+    def __init__(self, device_dict: Dict):
+        self.device = device_dict['device']
+        self.threadsperblock = device_dict['threadsperblock']
 
-        if device == 'cpu' or device == torch.device('cpu'):
+        if self.device == 'cpu' or self.device == torch.device('cpu'):
             self.module = _cpu
         else:
             self.module = _cuda
@@ -653,10 +525,10 @@ class Grid:
         """Grid sparse k-space data on a Cartesian Grid.
 
         Args:
-            input (tensor): Cartesian k-space data.
+            input (tensor): Non-Cartesian k-space data.
 
         Returns:
-            tensor: Non-Cartesian sparse k-space data.
+            tensor: Cartesian sparse k-space data.
         """
         # unpack input
         sparse_coeff = kernel_dict['sparse_coeff']
@@ -674,8 +546,8 @@ class Grid:
 
         # do actual interpolation
         output, input = BackendBridge.pytorch2numba(output, input)
-        self.module._Gridding(sparse_coeff, basis,
-                              sharing_width)(output, input)
+        self.module._Gridding(input.size, sparse_coeff, basis,
+                              sharing_width, self.threadsperblock)(output, input)
         output, input = BackendBridge.numba2pytorch(output, input)
 
         # reformat for output
@@ -685,3 +557,140 @@ class Grid:
         input = reformat.unravel_data(input)
 
         return output
+
+
+class Dense2Sparse:
+    """Transform dense k-space data to sparse k-space data."""
+    device: Union[str, torch.device]
+    threadsperblock: int
+
+    def __init__(self, device_dict: Dict):
+        self.device = device_dict['device']
+        self.threadsperblock = device_dict['threadsperblock']
+
+        if self.device == 'cpu' or self.device == torch.device('cpu'):
+            self.module = _cpu
+        else:
+            self.module = _cuda
+
+    def __call__(self, input: Tensor, sampling_mask: Tensor, basis_adjoint: Union[None, Tensor]) -> Tensor:
+        """Sample Cartesian k-space data from given grid coordinates.
+
+        Args:
+            input (tensor): Cartesian dense k-space data.
+            sampling_mask (tensor): Non-zero grid locations
+
+        Returns:
+            tensor: Output Cartesian sparse k-space data.
+        """
+        # unpack input
+        ndim = sampling_mask.shape[-1]
+        coord_shape = sampling_mask.shape
+        grid_shape = input.shape[-ndim:]
+
+        # reformat data for computation
+        reformat = DataReshape(coord_shape, grid_shape)
+        input = reformat.ravel_grid(input)
+
+        # preallocate output data
+        output = reformat.generate_empty_data()
+
+        # handle basis
+        if basis_adjoint is not None:
+            basis_adjoint = BackendBridge.pytorch2numba(basis_adjoint)
+
+        # do actual interpolation
+        output, input = BackendBridge.pytorch2numba(output, input)
+        self.module._Dense2Sparse(
+            output.size, (sampling_mask, grid_shape), basis_adjoint, self.threadsperblock)(output, input)
+        output, input = BackendBridge.numba2pytorch(output, input)
+
+        # handle basis
+        if basis_adjoint is not None:
+            basis_adjoint = BackendBridge.numba2pytorch(basis_adjoint)
+
+        # reformat for output
+        output = reformat.unravel_data(output)
+
+        # restore original shape
+        input = reformat.unravel_grid(input)
+
+        return output
+
+
+class Sparse2Dense:
+    """Transform sparse k-space data to dense k-space data."""
+    device: Union[str, torch.device]
+    threadsperblock: int
+
+    def __init__(self, device_dict: Dict):
+        self.device = device_dict['device']
+        self.threadsperblock = device_dict['threadsperblock']
+
+        if self.device == 'cpu' or self.device == torch.device('cpu'):
+            self.module = _cpu
+        else:
+            self.module = _cuda
+
+    def __call__(self, input: Tensor, sampling_mask: Tensor, grid_shape: Tuple[int],
+                 basis: Union[None, Tensor], sharing_width: Union[None, int]) -> Tensor:
+        """Sample Cartesian k-space data from given grid coordinates.
+
+        Args:
+            input (tensor): Cartesian dense k-space data.
+            sampling_mask (tensor): Non-zero grid locations
+
+        Returns:
+            tensor: Output Cartesian sparse k-space data.
+        """
+        # unpack input
+        coord_shape = sampling_mask.shape
+
+        # reformat data for computation
+        reformat = DataReshape(coord_shape, grid_shape)
+        input = reformat.ravel_data(input)
+
+        # preallocate output data
+        output = reformat.generate_empty_grid(basis)
+
+        # handle basis
+        if basis is not None:
+            basis = BackendBridge.pytorch2numba(basis)
+
+        # do actual interpolation
+        output, input = BackendBridge.pytorch2numba(output, input)
+        self.module._Sparse2Dense(
+            output.size, (sampling_mask, grid_shape), basis, sharing_width, self.threadsperblock)(output, input)
+        output, input = BackendBridge.numba2pytorch(output, input)
+
+        # handle basis
+        if basis is not None:
+            basis = BackendBridge.numba2pytorch(basis)
+
+        # reformat for output
+        output = reformat.unravel_grid(output)
+
+        # restore original shape
+        input = reformat.unravel_data(input)
+
+        return output
+
+
+class Toeplitz:
+    """Perform Toeplitz convolution for fast self-adjoint."""
+
+    def __init__(self, data_size: int, device_dict: Dict):
+        device = device_dict['device']
+        threadsperblock = device_dict['threadsperblock']
+
+        # calculate blocks per grid
+        blockspergrid = int(
+            (data_size + (threadsperblock - 1)) // threadsperblock)
+
+        if device == 'cpu' or device == torch.device('cpu'):
+            self._apply = _cpu._dot_product
+        else:
+            self.module = _cuda._dot_product[blockspergrid, threadsperblock]
+
+    def __call__(self, kdata_out, kdata_in, mtf):
+        self.apply(kdata_out, kdata_in, mtf)

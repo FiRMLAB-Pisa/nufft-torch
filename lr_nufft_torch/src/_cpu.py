@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CPU specific functions.
+CPU specific subroutines.
 
 @author: Matteo Cencini
 """
@@ -9,6 +9,7 @@ CPU specific functions.
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-arguments
 # pylint: disable=protected-access
+# pylint: disable=unused-argument
 
 from typing import Tuple, Callable
 
@@ -37,11 +38,307 @@ def _prepare_sparse_coefficient_matrix(value, index, coord, beta, shape):
             index[i, x_i] = (x_0 + x_i) % shape
 
 
+_dot_product = nb.njit(_common._dot_product, fastmath=True, cache=True)
+
+
+@nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+def _batched_dot_product(data_out, data_in, matrix):
+
+    n_coeff, batch_size, _ = data_in.shape
+
+    for i in nb.prange(n_coeff * batch_size):
+        coeff = i // batch_size
+        batch = i % batch_size
+
+        _dot_product(data_out[coeff][batch],
+                     matrix[coeff], data_in[coeff][batch])
+
+    return data_out
+
+
+class _Dense2Sparse:
+
+    apply: Callable
+
+    def __init__(self, data_size, sampling_tuple, basis_adjoint, threadsperblock):
+
+        # select correct sub-routine
+        if basis_adjoint is None:
+            callback = _Dense2Sparse._get_callback()
+
+            def _apply(sparse_data, dense_data):
+                return callback(sparse_data, dense_data, sampling_tuple)
+
+        else:
+            callback = _Dense2Sparse._get_lowrank_callback()
+
+            def _apply(sparse_data, dense_data):
+                return callback(sparse_data, dense_data, sampling_tuple, basis_adjoint)
+
+        # assign
+        self.__call__ = _apply
+
+    @staticmethod
+    def _get_callback():
+
+        # sampling mask evaluation function
+        _get_source_point = _mask._evaluate
+
+        # iterator function
+        _get_target_point = _iterator._get_noncart_points_parallelize_over_all
+
+        # sampling function
+        sample = _sample._data
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(sparse_data, dense_data, sampling_tuple):
+
+            # get shapes
+            nframes, batch_size, npts = sparse_data.shape
+
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(nframes*batch_size*npts):
+
+                # get current frame and k-space index
+                frame, batch, target = _get_target_point(i, batch_size, npts)
+
+                # get source point
+                source = _get_source_point(frame, target, sampling_tuple)
+
+                # update
+                sample(sparse_data, dense_data, (batch, frame, target, source))
+
+        return _callback
+
+    @staticmethod
+    def _get_lowrank_callback():
+
+        # sampling mask evaluation function
+        _get_source_point = _mask._evaluate
+
+        # iterator function
+        _get_target_point = _iterator._get_noncart_points_parallelize_over_all
+
+        # sampling function
+        sample = _sample._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(sparse_data, dense_data, sampling_tuple, basis_adjoint):
+
+            # get shapes
+            nframes, batch_size, npts = sparse_data.shape
+            ncoeff = basis_adjoint.shape[-1]
+
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(nframes*batch_size*npts):
+
+                # get current frame and k-space index
+                frame, batch, target = _get_target_point(i, batch_size, npts)
+
+                # get source point
+                source = _get_source_point(frame, target, sampling_tuple)
+
+                # update
+                sample(sparse_data, dense_data,
+                       (batch, frame, target, source), basis_adjoint, ncoeff)
+
+        return _callback
+
+
+class _Sparse2Dense:
+
+    apply: Callable
+
+    def __init__(self, data_size, sampling_tuple, basis, sharing_width, threadsperblock):
+
+        # select correct sub-routine
+        if basis is None and sharing_width is None:
+            callback = _Sparse2Dense._get_callback()
+
+            def _apply(dense_data, sparse_data):
+                return callback(dense_data, sparse_data, sampling_tuple)
+
+        elif basis is None and sharing_width is not None:
+            callback = _Sparse2Dense._get_viewshare_callback()
+
+            def _apply(dense_data, sparse_data):
+                return callback(dense_data, sparse_data, sampling_tuple, basis)
+
+        elif basis is not None and sharing_width is None:
+            callback = _Sparse2Dense._get_lowrank_callback()
+
+            def _apply(dense_data, sparse_data):
+                return callback(dense_data, sparse_data, sampling_tuple, sharing_width)
+
+        else:
+            callback = _Sparse2Dense._get_viewshare_lowrank_callback()
+
+            def _apply(dense_data, sparse_data):
+                return callback(dense_data, sparse_data, sampling_tuple, sharing_width, basis)
+
+        # assign
+        self.__call__ = _apply
+
+    @staticmethod
+    def _get_callback():
+
+        # sampling mask evaluation function
+        _get_target_point = _mask._evaluate
+
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        deposit = _deposit._data
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(dense_data, sparse_data, sampling_tuple):
+
+            # get shapes
+            nframes, batch_size, npts = sparse_data.shape
+
+            # parallelize over frames and batches
+            for i in nb.prange(nframes*batch_size):
+
+                # get current frame and k-space index
+                frame, batch = _get_source_point(i, batch_size)
+
+                # iterate over readout points
+                for source in range(npts):
+
+                    target = _get_target_point(frame, source, sampling_tuple)
+
+                    # update
+                    deposit(dense_data, sparse_data,
+                            (batch, frame, target, source))
+
+        return _callback
+
+    @staticmethod
+    def _get_viewshare_callback():
+
+        # sampling mask evaluation function
+        _get_target_point = _mask._evaluate
+
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        deposit = _deposit._data_viewshare
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(dense_data, sparse_data, sampling_tuple, sharing_width):
+
+            # get shapes
+            nframes, batch_size, npts = sparse_data.shape
+
+            # parallelize over frames and batches
+            for i in nb.prange(nframes*batch_size):
+
+                # get current frame and k-space index
+                frame, batch = _get_source_point(i, batch_size)
+
+                # iterate over readout points
+                for source in range(npts):
+
+                    # get target point
+                    target = _get_target_point(frame, source, sampling_tuple)
+
+                    # update
+                    deposit(dense_data, sparse_data,
+                            (batch, frame, target, source), sharing_width, nframes)
+
+        return _callback
+
+    @staticmethod
+    def _get_lowrank_callback():
+
+        # sampling mask evaluation function
+        _get_target_point = _mask._evaluate
+
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        deposit = _deposit._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(dense_data, sparse_data, sampling_tuple, basis):
+
+            # get shapes
+            nframes, batch_size, npts = sparse_data.shape
+            ncoeff = basis.shape[0]
+
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(nframes):
+
+                    # iterate over readout points
+                    for source in range(npts):
+
+                        # get target point
+                        target = _get_target_point(
+                            frame, source, sampling_tuple)
+
+                        # update
+                        deposit(dense_data, sparse_data,
+                                (batch, coeff, target, frame, source), basis)
+
+        return _callback
+
+    @staticmethod
+    def _get_viewshare_lowrank_callback():
+
+        # sampling mask evaluation function
+        _get_target_point = _mask._evaluate
+
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        deposit = _deposit._data_viewshare_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(dense_data, sparse_data, sampling_tuple, sharing_width, basis):
+
+            # get shapes
+            nframes, batch_size, npts = sparse_data.shape
+            ncoeff = basis.shape[0]
+
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(nframes):
+
+                    # iterate over readout points
+                    for source in range(npts):
+
+                        # get target point
+                        target = _get_target_point(
+                            frame, source, sampling_tuple)
+
+                        # update
+                        deposit(dense_data, sparse_data,
+                                (batch, coeff, target, frame, source),
+                                sharing_width, nframes, basis)
+
+        return _callback
+
+
 class _DeGridding:
 
     apply: Callable
 
-    def __init__(self, kernel_dict, basis_adjoint=None):
+    def __init__(self, data_size, kernel_dict, basis_adjoint, threadsperblock):
 
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_dict['sparse_coefficients']
@@ -155,7 +452,7 @@ class _Gridding:
 
     apply: Callable
 
-    def __init__(self, kernel_dict, basis=None, sharing_width=None):
+    def __init__(self, data_size, kernel_dict, basis, sharing_width, threadsperblock):
 
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_dict['sparse_coefficients']
@@ -398,6 +695,16 @@ class _iterator(_common._iterator):
         _common._iterator._check_boundaries, fastmath=True, cache=True))
 
 
+class _mask(_common._mask):
+
+    _ravel_index = staticmethod(
+        nb.njit(_common._mask._ravel_index, fastmath=True, cache=True))
+
+    # grid position evaluator
+    _evaluate = staticmethod(
+        nb.njit(_common._mask._evaluate, fastmath=True, cache=True))
+
+
 class _kernel(_common._kernel):
 
     # Main Kaiser-Bessel kernel function
@@ -433,6 +740,95 @@ class _kernel(_common._kernel):
     # precomputed Kernel evaluation
     _evaluate = staticmethod(
         nb.njit(_common._kernel._evaluate, fastmath=True, cache=True))
+
+
+class _sample(_common._sample):
+
+    _data = staticmethod(
+        nb.njit(_common._sample._data, fastmath=True, cache=True))
+
+    _data_lowrank = staticmethod(
+        nb.njit(_common._sample._data_lowrank, fastmath=True, cache=True))
+
+
+class _deposit:
+
+    @staticmethod
+    @nb.njit(fastmath=True, cache=True)
+    def _data(data_out, data_in, index_tuple):
+
+        # unpack indexes
+        batch, frame, index_out, index_in = index_tuple
+
+        # get input and output locations
+        idx_out = (frame, batch, index_out)
+        idx_in = (frame, batch, index_in)
+
+        # update data point
+        data_out[idx_out] += data_in[idx_in]
+
+    @staticmethod
+    @nb.njit(fastmath=True, cache=True)
+    def _data_viewshare(data_out, data_in, index_tuple,
+                        share_width, nframes):
+
+        # unpack indexes
+        batch, frame, index_out, index_in = index_tuple
+
+        # get output location
+        idx_out = (frame, batch, index_out)
+
+        # iterate over frames within sharing window
+        for dframe in range(-share_width // 2, share_width // 2):
+            # get input frame
+            frame_in = _iterator._check_boundaries(frame + dframe, nframes)
+
+            # get input location
+            idx_in = (frame_in, batch, index_in)
+
+            # update data point
+            data_out[idx_out] += data_in[idx_in]
+
+    @staticmethod
+    @nb.njit(fastmath=True, cache=True)
+    def _data_lowrank(data_out, data_in, index_tuple,
+                      basis):
+
+        # unpack indexes
+        batch, coeff, index_out, frame, index_in = index_tuple
+
+        # get output and input locations
+        idx_out = (coeff, batch, index_out)
+        idx_in = (frame, batch, index_in)
+
+        # get total weight
+        weight = basis[coeff, frame]
+
+        # update data point
+        data_out[idx_out] += weight * data_in[idx_in]
+
+    @staticmethod
+    @nb.njit(fastmath=True, cache=True)
+    def _data_viewshare_lowrank(data_out, data_in, index_tuple,
+                                share_width, nframes, basis):
+
+        # unpack indexes
+        batch, coeff, index_out, frame, index_in = index_tuple
+
+        # get output and input locations
+        idx_out = (coeff, batch, index_out)
+        idx_in = (frame, batch, index_in)
+
+        # iterate over frames within sharing window
+        for dframe in range(-share_width // 2, share_width // 2):
+            # get input frame
+            frame_in = _iterator._check_boundaries(frame + dframe, nframes)
+
+            # get total weight
+            weight = basis[coeff, frame_in]
+
+            # update data point
+            data_out[idx_out] += weight * data_in[idx_in]
 
 
 class _gather(_common._gather):
