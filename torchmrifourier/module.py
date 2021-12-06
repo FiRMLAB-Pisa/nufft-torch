@@ -144,3 +144,5 @@ class NUFFTSelfadjoint(torch.nn.Module):
 
     def forward(self, image):  # pylint: disable=missing-function-docstring
         return _NUFFTSelfadjoint.apply(image, self.toeplitz)
+
+

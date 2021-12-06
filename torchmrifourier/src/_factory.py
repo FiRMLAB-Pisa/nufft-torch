@@ -16,16 +16,16 @@ Factory routines to build NUFFT/Toeplitz objects.
 import numpy as np
 import torch
 
-from lr_nufft_torch.src import _cpu
-from lr_nufft_torch.src._subroutines import (Apodize,
-                                             BackendBridge,
-                                             Crop,
-                                             FFT,
-                                             Grid,
-                                             IFFT,
-                                             Sparse2Dense,
-                                             Utils,
-                                             ZeroPad)
+from torchmrifourier.src import _cpu
+from torchmrifourier.src._subroutines import (Apodize,
+                                              BackendBridge,
+                                              Crop,
+                                              FFT,
+                                              Grid,
+                                              IFFT,
+                                              Sparse2Dense,
+                                              Utils,
+                                              ZeroPad)
 
 
 class AbstractFactory:

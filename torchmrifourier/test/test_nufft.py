@@ -11,7 +11,7 @@ import pytest
 from torch import testing as tt
 
 
-from lr_nufft_torch import functional
+from torchmrifourier import functional
 
 
 from conftest import _get_noncartesian_params

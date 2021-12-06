@@ -19,10 +19,10 @@ import numba as nb
 import torch
 from torch import Tensor
 
-from lr_nufft_torch.src import _cpu
+from torchmrifourier.src import _cpu
 
 if torch.cuda.is_available():
-    from lr_nufft_torch.src import _cuda
+    from torchmrifourier.src import _cuda
 
 
 class Utils:

@@ -14,8 +14,6 @@ from torch import Tensor
 
 import torchkbnufft as tkbn
 
-from lr_nufft_torch import _util
-
 import warnings
 
 warnings.simplefilter('ignore', category=FutureWarning)
@@ -349,7 +347,7 @@ def _prepare_trajectory_for_torchkbnufft(ktraj):
     ktraj = ktraj / kabs.max() * np.pi
     
     # reshape
-    ktraj = ktraj.reshape((_util.prod(ktraj.shape[:-1]), ktraj.shape[-1]))
+    ktraj = ktraj.reshape(np.prod(ktraj.shape[:-1]), ktraj.shape[-1])
     ktraj = ktraj.T
 
     return ktraj
@@ -490,3 +488,5 @@ sl_angles = [[0, 0, 0],
              [0, 0, 0],
              [0, 0, 0],
              [0, 0, 0]]
+
+

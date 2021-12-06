@@ -12,10 +12,10 @@ with open(os.path.join(here, "README.md")) as f:
 install_requires = ["torch>=1.10", "numpy", "numba"]
 
 setuptools.setup(
-    name="lr-nufft-torch",
+    name="torchmrifourier",
     version=0.1,
 
-    description="Pytorch-based NUFFT with embedded low-rank subspace projection.",
+    description="Pytorch-based Fourier Transform with embedded low-rank subspace projection.",
     long_description=long_description,
     long_description_content_type="text/markdown",
 
@@ -43,8 +43,8 @@ setuptools.setup(
 
     keywords=["MRI", "model-based", "NUFFT"],
 
-    packages=["lr_nufft_torch"],
-    package_dir={"lr_nufft_torch": "lr_nufft_torch"},
+    packages=["torchmrifourier"],
+    package_dir={"torchmrifourier": "torchmrifourier"},
     python_requires=">=3.6",
 
     install_requires=["numpy"],

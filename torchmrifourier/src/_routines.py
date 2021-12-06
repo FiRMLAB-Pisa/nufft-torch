@@ -19,20 +19,20 @@ import torch
 
 from torch import Tensor
 
-from lr_nufft_torch.src._subroutines import (Apodize,
-                                             Crop,
-                                             DeGrid,
-                                             Dense2Sparse,
-                                             DeviceDispatch,
-                                             FFT,
-                                             Grid,
-                                             IFFT,
-                                             Sparse2Dense,
-                                             Utils,
-                                             Toeplitz,
-                                             ZeroPad)
+from torchmrifourier.src._subroutines import (Apodize,
+                                              Crop,
+                                              DeGrid,
+                                              Dense2Sparse,
+                                              DeviceDispatch,
+                                              FFT,
+                                              Grid,
+                                              IFFT,
+                                              Sparse2Dense,
+                                              Utils,
+                                              Toeplitz,
+                                              ZeroPad)
 
-from lr_nufft_torch.src._factory import NUFFTFactory, CartesianToeplitzFactory, NonCartesianToeplitzFactory
+from torchmrifourier.src._factory import NUFFTFactory, CartesianToeplitzFactory, NonCartesianToeplitzFactory
 
 
 def fft(image: Tensor, sampling_mask: Tensor, basis_adjoint: Union[None, Tensor] = None,

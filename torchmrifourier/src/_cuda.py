@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-CPU specific subroutines.
+CUDA specific subroutines.
 
 @author: Matteo Cencini
 """
@@ -9,44 +9,27 @@ CPU specific subroutines.
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-arguments
 # pylint: disable=protected-access
-# pylint: disable=unused-argument
+# pylint: disable=too-many-function-args
+# pylint: disable=unsubscriptable-object
+# pylint: disable=arguments-differ
 
-from typing import Tuple, Callable
+from typing import Callable
 
-import numpy as np
-import numba as nb
+from numba import cuda
 
-from lr_nufft_torch.src import _common
-
-
-@nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-def _prepare_sparse_coefficient_matrix(value, index, coord, beta, shape):
-
-    # get sizes
-    npts = coord.shape[0]
-    width = index.shape[-1]
-
-    for i in nb.prange(npts):
-        x_0 = np.ceil(coord[i] - width / 2)
-
-        for x_i in range(width):
-            val = _kernel._function(
-                ((x_0 + x_i) - coord[i]) / (width / 2), beta)
-
-            # save interpolator
-            value[i, x_i] = val
-            index[i, x_i] = (x_0 + x_i) % shape
+from torchmrifourier.src import _common
 
 
-_dot_product = nb.njit(_common._dot_product, fastmath=True, cache=True)
+_dot_product = cuda.jit(_common._dot_product, device=True, inline=True)
 
 
-@nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+@cuda.jit(fastmath=True)  # pragma: no cover
 def _batched_dot_product(data_out, data_in, matrix):
 
     n_coeff, batch_size, _ = data_in.shape
 
-    for i in nb.prange(n_coeff * batch_size):
+    i = cuda.grid(1)
+    if i < n_coeff*batch_size:
         coeff = i // batch_size
         batch = i % batch_size
 
@@ -62,6 +45,9 @@ class _Dense2Sparse:
 
     def __init__(self, data_size, sampling_tuple, basis_adjoint, threadsperblock):
 
+        # calculate blocks per grid
+        blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
+
         # select correct sub-routine
         if basis_adjoint is None:
             callback = _Dense2Sparse._get_callback()
@@ -76,7 +62,7 @@ class _Dense2Sparse:
                 return callback(sparse_data, dense_data, sampling_tuple, basis_adjoint)
 
         # assign
-        self.__call__ = _apply
+        self.__call__ = _apply[blockspergrid, threadsperblock]
 
     @staticmethod
     def _get_callback():
@@ -90,14 +76,15 @@ class _Dense2Sparse:
         # sampling function
         sample = _sample._data
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(sparse_data, dense_data, sampling_tuple):
 
             # get shapes
             nframes, batch_size, npts = sparse_data.shape
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(nframes*batch_size*npts):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
@@ -122,7 +109,7 @@ class _Dense2Sparse:
         # sampling function
         sample = _sample._data_lowrank
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(sparse_data, dense_data, sampling_tuple, basis_adjoint):
 
             # get shapes
@@ -130,7 +117,8 @@ class _Dense2Sparse:
             ncoeff = basis_adjoint.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(nframes*batch_size*npts):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
@@ -139,8 +127,8 @@ class _Dense2Sparse:
                 source = _get_source_point(frame, target, sampling_tuple)
 
                 # update
-                sample(sparse_data, dense_data,
-                       (batch, frame, target, source), basis_adjoint, ncoeff)
+                sample(sparse_data, dense_data, (batch, frame,
+                       target, source), basis_adjoint, ncoeff)
 
         return _callback
 
@@ -150,6 +138,9 @@ class _Sparse2Dense:
     apply: Callable
 
     def __init__(self, data_size, sampling_tuple, basis, sharing_width, threadsperblock):
+
+        # calculate blocks per grid
+        blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
 
         # select correct sub-routine
         if basis is None and sharing_width is None:
@@ -177,7 +168,7 @@ class _Sparse2Dense:
                 return callback(dense_data, sparse_data, sampling_tuple, sharing_width, basis)
 
         # assign
-        self.__call__ = _apply
+        self.__call__ = _apply[blockspergrid, threadsperblock]
 
     @staticmethod
     def _get_callback():
@@ -186,31 +177,30 @@ class _Sparse2Dense:
         _get_target_point = _mask._evaluate
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # spread function
         deposit = _deposit._data
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(dense_data, sparse_data, sampling_tuple):
 
             # get shapes
             nframes, batch_size, npts = sparse_data.shape
 
-            # parallelize over frames and batches
-            for i in nb.prange(nframes*batch_size):
+            # parallelize over frames, batches and k-space points
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                frame, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(i, batch_size, npts)
 
-                # iterate over readout points
-                for source in range(npts):
+                # get source point
+                target = _get_target_point(frame, source, sampling_tuple)
 
-                    target = _get_target_point(frame, source, sampling_tuple)
-
-                    # update
-                    deposit(dense_data, sparse_data,
-                            (batch, frame, target, source))
+                # update
+                deposit(dense_data, sparse_data,
+                        (batch, frame, target, source))
 
         return _callback
 
@@ -221,32 +211,30 @@ class _Sparse2Dense:
         _get_target_point = _mask._evaluate
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # spread function
         deposit = _deposit._data_viewshare
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(dense_data, sparse_data, sampling_tuple, sharing_width):
 
             # get shapes
             nframes, batch_size, npts = sparse_data.shape
 
-            # parallelize over frames and batches
-            for i in nb.prange(nframes*batch_size):
+            # parallelize over frames, batches and k-space points
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                frame, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(i, batch_size, npts)
 
-                # iterate over readout points
-                for source in range(npts):
+                # get source point
+                target = _get_target_point(frame, source, sampling_tuple)
 
-                    # get target point
-                    target = _get_target_point(frame, source, sampling_tuple)
-
-                    # update
-                    deposit(dense_data, sparse_data,
-                            (batch, frame, target, source), sharing_width, nframes)
+                # update
+                deposit(dense_data, sparse_data, (batch, frame,
+                        target, source), sharing_width, nframes)
 
         return _callback
 
@@ -257,12 +245,12 @@ class _Sparse2Dense:
         _get_target_point = _mask._evaluate
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # spread function
         deposit = _deposit._data_lowrank
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(dense_data, sparse_data, sampling_tuple, basis):
 
             # get shapes
@@ -270,24 +258,18 @@ class _Sparse2Dense:
             ncoeff = basis.shape[0]
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(ncoeff*batch_size):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                coeff, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(i, batch_size, npts)
 
-                # iterate over frames
-                for frame in range(nframes):
+                # get source point
+                target = _get_target_point(frame, source, sampling_tuple)
 
-                    # iterate over readout points
-                    for source in range(npts):
-
-                        # get target point
-                        target = _get_target_point(
-                            frame, source, sampling_tuple)
-
-                        # update
-                        deposit(dense_data, sparse_data,
-                                (batch, coeff, target, frame, source), basis)
+                # update
+                deposit(dense_data, sparse_data,
+                        (batch, frame, target, source), basis, ncoeff)
 
         return _callback
 
@@ -298,12 +280,12 @@ class _Sparse2Dense:
         _get_target_point = _mask._evaluate
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # spread function
         deposit = _deposit._data_viewshare_lowrank
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(dense_data, sparse_data, sampling_tuple, sharing_width, basis):
 
             # get shapes
@@ -311,25 +293,18 @@ class _Sparse2Dense:
             ncoeff = basis.shape[0]
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(ncoeff*batch_size):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                coeff, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(i, batch_size, npts)
 
-                # iterate over frames
-                for frame in range(nframes):
+                # get source point
+                target = _get_target_point(frame, source, sampling_tuple)
 
-                    # iterate over readout points
-                    for source in range(npts):
-
-                        # get target point
-                        target = _get_target_point(
-                            frame, source, sampling_tuple)
-
-                        # update
-                        deposit(dense_data, sparse_data,
-                                (batch, coeff, target, frame, source),
-                                sharing_width, nframes, basis)
+                # update
+                deposit(dense_data, sparse_data, (batch, frame, target,
+                        source), sharing_width, nframes, basis, ncoeff)
 
         return _callback
 
@@ -346,6 +321,9 @@ class _DeGridding:
 
         # get kernel neighbourhood
         kernel_neighbourhood = _iterator._get_neighbourhood(kernel_width)
+
+        # calculate blocks per grid
+        blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
 
         # select correct sub-routine
         if basis_adjoint is None:
@@ -366,7 +344,7 @@ class _DeGridding:
                                 basis_adjoint)
 
         # assign
-        self.__call__ = _apply
+        self.apply = _apply[blockspergrid, threadsperblock]
 
     @staticmethod
     def _get_callback():
@@ -380,7 +358,7 @@ class _DeGridding:
         # gather function
         gather = _gather._data
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(noncart_data, cart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood):
@@ -389,7 +367,8 @@ class _DeGridding:
             nframes, batch_size, npts = noncart_data.shape
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(nframes*batch_size*npts):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(
@@ -418,7 +397,7 @@ class _DeGridding:
         # gather function
         gather = _gather._data_lowrank
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(noncart_data, cart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood,
@@ -426,10 +405,10 @@ class _DeGridding:
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
-            ncoeff = basis_adjoint.shape[-1]
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(nframes*batch_size*npts):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(
@@ -442,8 +421,7 @@ class _DeGridding:
 
                     # update
                     gather(noncart_data, cart_data,
-                           (batch, frame, target, source), value,
-                           basis_adjoint, ncoeff)
+                           (batch, frame, target, source), value, basis_adjoint)
 
         return _callback
 
@@ -460,6 +438,9 @@ class _Gridding:
 
         # get kernel neighbourhood
         kernel_neighbourhood = _iterator._get_neighbourhood(kernel_width)
+
+        # calculate blocks per grid
+        blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
 
         # select correct sub-routine
         if basis is None and sharing_width is None:
@@ -496,13 +477,13 @@ class _Gridding:
                                 basis)
 
         # assign
-        self.__call__ = _apply
+        self.apply = _apply[blockspergrid, threadsperblock]
 
     @staticmethod
     def _get_callback():
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # kernel function
         kernel = _kernel._evaluate
@@ -510,7 +491,7 @@ class _Gridding:
         # spread function
         spread = _spread._data
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(cart_data, noncart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood):
@@ -518,24 +499,23 @@ class _Gridding:
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
 
-            # parallelize over frames and batches
-            for i in nb.prange(nframes*batch_size):
+            # parallelize over frames, batches and k-space points
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                frame, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(
+                    i, batch_size, npts)
 
-                # iterate over readout points
-                for source in range(npts):
+                # spread data within kernel radius
+                for point in kernel_neighbourhood:
+                    value, target = kernel(
+                        source, point, kernel_sparse_coefficients)
 
-                    # spread data within kernel radius
-                    for point in kernel_neighbourhood:
-                        value, target = kernel(
-                            source, point, kernel_sparse_coefficients)
-
-                        # update
-                        spread(cart_data, noncart_data,
-                               (batch, frame, target, source),
-                               value)
+                    # update
+                    spread(cart_data, noncart_data,
+                           (batch, frame, target, source),
+                           value)
 
         return _callback
 
@@ -543,7 +523,7 @@ class _Gridding:
     def _get_viewshare_callback():
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # kernel function
         kernel = _kernel._evaluate
@@ -551,7 +531,7 @@ class _Gridding:
         # spread function
         spread = _spread._data_viewshare
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(cart_data, noncart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood,
@@ -560,24 +540,23 @@ class _Gridding:
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
 
-            # parallelize over frames and batches
-            for i in nb.prange(nframes*batch_size):
+            # parallelize over frames, batches and k-space points
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                frame, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(
+                    i, batch_size, npts)
 
-                # iterate over readout points
-                for source in range(npts):
+                # spread data within kernel radius
+                for point in kernel_neighbourhood:
+                    value, target = kernel(
+                        source, point, kernel_sparse_coefficients)
 
-                    # spread data within kernel radius
-                    for point in kernel_neighbourhood:
-                        value, target = kernel(
-                            source, point, kernel_sparse_coefficients)
-
-                        # update
-                        spread(cart_data, noncart_data,
-                               (batch, frame, target, source),
-                               value, sharing_width, nframes)
+                    # update
+                    spread(cart_data, noncart_data,
+                           (batch, frame, target, source),
+                           value, sharing_width, nframes)
 
         return _callback
 
@@ -585,7 +564,7 @@ class _Gridding:
     def _get_lowrank_callback():
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # kernel function
         kernel = _kernel._evaluate
@@ -593,7 +572,7 @@ class _Gridding:
         # spread function
         spread = _spread._data_lowrank
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(noncart_data, cart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood,
@@ -604,26 +583,22 @@ class _Gridding:
             ncoeff = basis.shape[0]
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(ncoeff*batch_size):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                coeff, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(
+                    i, batch_size, npts)
 
-                # iterate over frames
-                for frame in range(nframes):
+                # spread data within kernel radius
+                for point in kernel_neighbourhood:
+                    value, target = kernel(
+                        source, point, kernel_sparse_coefficients)
 
-                    # iterate over readout points
-                    for source in range(npts):
-
-                        # spread data within kernel radius
-                        for point in kernel_neighbourhood:
-                            value, target = kernel(
-                                source, point, kernel_sparse_coefficients)
-
-                            # update
-                            spread(cart_data, noncart_data,
-                                   (batch, coeff, target, frame, source),
-                                   value, basis)
+                    # update
+                    spread(cart_data, noncart_data,
+                           (batch, frame, target, source),
+                           value, basis, ncoeff)
 
         return _callback
 
@@ -631,7 +606,7 @@ class _Gridding:
     def _get_viewshare_lowrank_callback():
 
         # iterator function
-        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
         # kernel function
         kernel = _kernel._evaluate
@@ -639,7 +614,7 @@ class _Gridding:
         # spread function
         spread = _spread._data_viewshare_lowrank
 
-        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @cuda.jit(fastmath=True)  # pragma: no cover
         def _callback(cart_data, noncart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood,
@@ -651,110 +626,81 @@ class _Gridding:
             ncoeff = basis.shape[0]
 
             # parallelize over frames, batches and k-space points
-            for i in nb.prange(ncoeff*batch_size):
+            i = cuda.grid(1)
+            if i < nframes*batch_size*npts:
 
                 # get current frame and k-space index
-                coeff, batch = _get_source_point(i, batch_size)
+                frame, batch, source = _get_source_point(
+                    i, batch_size, npts)
 
-                # iterate over frames
-                for frame in range(nframes):
+                # spread data within kernel radius
+                for point in kernel_neighbourhood:
+                    value, target = kernel(
+                        source, point, kernel_sparse_coefficients)
 
-                    # iterate over readout points
-                    for source in range(npts):
-
-                        # spread data within kernel radius
-                        for point in kernel_neighbourhood:
-                            value, target = kernel(
-                                source, point, kernel_sparse_coefficients)
-
-                            # update
-                            spread(cart_data, noncart_data,
-                                   (batch, coeff, target, frame, source),
-                                   value, sharing_width, nframes, basis)
+                    # update
+                    spread(cart_data, noncart_data,
+                           (batch, frame, target, source),
+                           value, sharing_width, nframes, basis, ncoeff)
 
         return _callback
 
 
 class _iterator(_common._iterator):
 
-    _get_noncart_points_parallelize_over_all = staticmethod(nb.njit(
+    _get_noncart_points_parallelize_over_all = staticmethod(cuda.jit(
         _common._iterator._get_noncart_points_parallelize_over_all,
-        fastmath=True, cache=True))
+        device=True, inline=True))
 
-    @staticmethod
-    @nb.njit(fastmath=True, cache=True)
-    def _get_noncart_points_parallelize_over_batch_and_frame(index: int,
-                                                             batch_size: int) -> Tuple[int, int]:
-
-        frame = index // batch_size
-        batch = index % batch_size
-
-        return frame, batch
-
-    _check_boundaries = staticmethod(nb.njit(
-        _common._iterator._check_boundaries, fastmath=True, cache=True))
+    _check_boundaries = staticmethod(cuda.jit(
+        _common._iterator._check_boundaries, device=True, inline=True))
 
 
 class _mask(_common._mask):
 
     _ravel_index = staticmethod(
-        nb.njit(_common._mask._ravel_index, fastmath=True, cache=True))
+        cuda.jit(_common._mask._ravel_index, device=True, inline=True))
 
     # grid position evaluator
     _evaluate = staticmethod(
-        nb.njit(_common._mask._evaluate, fastmath=True, cache=True))
+        cuda.jit(_common._mask._evaluate, device=True, inline=True))
 
 
 class _kernel(_common._kernel):
 
-    # Main Kaiser-Bessel kernel function
-    @staticmethod
-    @nb.njit(fastmath=True, cache=True)  # pragma: no cover
-    def _function(x_0, beta):
-        if abs(x_0) > 1:
-            value = 0
-
-        x_0 = beta * (1 - x_0**2)**0.5
-        x_i = x_0 / 3.75
-        if x_i < 3.75:
-            value = 1 + 3.5156229 * x_i**2 + 3.0899424 * x_i**4 +\
-                1.2067492 * x_i**6 + 0.2659732 * x_i**8 +\
-                0.0360768 * x_i**10 + 0.0045813 * x_i**12
-        else:
-            value = x_0**-0.5 * np.exp(x_0) * (
-                0.39894228 + 0.01328592 * x_i**-1 +
-                0.00225319 * x_i**-2 - 0.00157565 * x_i**-3 +
-                0.00916281 * x_i**-4 - 0.02057706 * x_i**-5 +
-                0.02635537 * x_i**-6 - 0.01647633 * x_i**-7 +
-                0.00392377 * x_i**-8)
-
-        return value
-
     # Utililities
     _prod = staticmethod(
-        nb.njit(_common._kernel._prod, fastmath=True, cache=True))
+        cuda.jit(_common._kernel._prod, device=True, inline=True))
 
     _ravel_index = staticmethod(
-        nb.njit(_common._kernel._ravel_index, fastmath=True, cache=True))
+        cuda.jit(_common._kernel._ravel_index, device=True, inline=True))
 
     # precomputed Kernel evaluation
     _evaluate = staticmethod(
-        nb.njit(_common._kernel._evaluate, fastmath=True, cache=True))
+        cuda.jit(_common._kernel._evaluate, device=True, inline=True))
 
 
 class _sample(_common._sample):
 
     _data = staticmethod(
-        nb.njit(_common._sample._data, fastmath=True, cache=True))
+        cuda.jit(_common._sample._data, device=True, inline=True))
 
     _data_lowrank = staticmethod(
-        nb.njit(_common._sample._data_lowrank, fastmath=True, cache=True))
+        cuda.jit(_common._sample._data_lowrank, device=True, inline=True))
 
 
 class _deposit:
 
     @staticmethod
-    @nb.njit(fastmath=True, cache=True)
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
+    def _update(output, index, value):
+        cuda.atomic.add(
+            output.real, index, value.real)
+        cuda.atomic.add(
+            output.imag, index, value.imag)
+
+    @staticmethod
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _data(data_out, data_in, index_tuple):
 
         # unpack indexes
@@ -765,12 +711,12 @@ class _deposit:
         idx_in = (frame, batch, index_in)
 
         # update data point
-        data_out[idx_out] += data_in[idx_in]
+        data_out = _deposit._update(
+            data_out, idx_out, data_in[idx_in])
 
     @staticmethod
-    @nb.njit(fastmath=True, cache=True)
-    def _data_viewshare(data_out, data_in, index_tuple,
-                        share_width, nframes):
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
+    def _data_viewshare(data_out, data_in, index_tuple, share_width, nframes):
 
         # unpack indexes
         batch, frame, index_out, index_in = index_tuple
@@ -787,63 +733,81 @@ class _deposit:
             idx_in = (frame_in, batch, index_in)
 
             # update data point
-            data_out[idx_out] += data_in[idx_in]
+            data_out = _deposit._update(
+                data_out, idx_out, data_in[idx_in])
 
     @staticmethod
-    @nb.njit(fastmath=True, cache=True)
-    def _data_lowrank(data_out, data_in, index_tuple,
-                      basis):
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
+    def _data_lowrank(data_out, data_in, index_tuple, basis, ncoeff):
 
         # unpack indexes
-        batch, coeff, index_out, frame, index_in = index_tuple
+        batch, frame, index_out, index_in = index_tuple
 
-        # get output and input locations
-        idx_out = (coeff, batch, index_out)
+        # get input locations
         idx_in = (frame, batch, index_in)
 
-        # get total weight
-        weight = basis[coeff, frame]
-
-        # update data point
-        data_out[idx_out] += weight * data_in[idx_in]
-
-    @staticmethod
-    @nb.njit(fastmath=True, cache=True)
-    def _data_viewshare_lowrank(data_out, data_in, index_tuple,
-                                share_width, nframes, basis):
-
-        # unpack indexes
-        batch, coeff, index_out, frame, index_in = index_tuple
-
-        # get output and input locations
-        idx_out = (coeff, batch, index_out)
-        idx_in = (frame, batch, index_in)
-
-        # iterate over frames within sharing window
-        for dframe in range(-share_width // 2, share_width // 2):
-            # get input frame
-            frame_in = _iterator._check_boundaries(frame + dframe, nframes)
+        # iterate over low rank coefficients
+        for coeff in range(ncoeff):
+            # get output frame
+            idx_out = (coeff, batch, index_out)
 
             # get total weight
-            weight = basis[coeff, frame_in]
+            weight = basis[coeff, frame]
 
             # update data point
-            data_out[idx_out] += weight * data_in[idx_in]
+            data_out = _deposit._update(
+                data_out, idx_out, weight * data_in[idx_in])
+
+    @staticmethod
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
+    def _data_viewshare_lowrank(data_out, data_in,
+                                index_tuple, share_width, nframes, basis, ncoeff):
+
+        # unpack indexes
+        batch, frame, index_out, index_in = index_tuple
+
+        # iterate over low rank coefficients
+        for coeff in range(ncoeff):
+            # get output frame
+            idx_out = (coeff, batch, index_out)
+
+            # iterate over frames within sharing window
+            for dframe in range(-share_width // 2, share_width // 2):
+                # get input frame
+                frame_in = _iterator._check_boundaries(frame + dframe, nframes)
+
+                # get input location
+                idx_in = (frame_in, batch, index_in)
+
+                # get total weight
+                weight = basis[coeff, frame_in]
+
+                # update data point
+                data_out = _deposit._update(
+                    data_out, idx_out, weight * data_in[idx_in])
 
 
 class _gather(_common._gather):
 
     _data = staticmethod(
-        nb.njit(_common._gather._data, fastmath=True, cache=True))
+        cuda.jit(_common._gather._data, device=True, inline=True))
 
     _data_lowrank = staticmethod(
-        nb.njit(_common._gather._data_lowrank, fastmath=True, cache=True))
+        cuda.jit(_common._gather._data_lowrank, device=True, inline=True))
 
 
-class _spread:
+class _spread(_deposit):
 
     @staticmethod
-    @nb.njit(fastmath=True, cache=True)
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
+    def _update(output, index, value):
+        cuda.atomic.add(
+            output.real, index, value.real)
+        cuda.atomic.add(
+            output.imag, index, value.imag)
+
+    @staticmethod
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _data(data_out, data_in, index_tuple, kernel_value):
 
         # unpack indexes
@@ -854,10 +818,11 @@ class _spread:
         idx_in = (frame, batch, index_in)
 
         # update data point
-        data_out[idx_out] += kernel_value * data_in[idx_in]
+        data_out = _deposit._update(
+            data_out, idx_out, kernel_value * data_in[idx_in])
 
     @staticmethod
-    @nb.njit(fastmath=True, cache=True)
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _data_viewshare(data_out, data_in, index_tuple, kernel_value,
                         share_width, nframes):
 
@@ -876,45 +841,56 @@ class _spread:
             idx_in = (frame_in, batch, index_in)
 
             # update data point
-            data_out[idx_out] += kernel_value * data_in[idx_in]
+            data_out = _deposit._update(
+                data_out, idx_out, kernel_value * data_in[idx_in])
 
     @staticmethod
-    @nb.njit(fastmath=True, cache=True)
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
     def _data_lowrank(data_out, data_in, index_tuple, kernel_value,
-                      basis):
+                      basis, ncoeff):
 
         # unpack indexes
-        batch, coeff, index_out, frame, index_in = index_tuple
+        batch, frame, index_out, index_in = index_tuple
 
-        # get output and input locations
-        idx_out = (coeff, batch, index_out)
+        # get input locations
         idx_in = (frame, batch, index_in)
 
-        # get total weight
-        weight = kernel_value * basis[coeff, frame]
-
-        # update data point
-        data_out[idx_out] += weight * data_in[idx_in]
-
-    @staticmethod
-    @nb.njit(fastmath=True, cache=True)
-    def _data_viewshare_lowrank(data_out, data_in, index_tuple, kernel_value,
-                                share_width, nframes, basis):
-
-        # unpack indexes
-        batch, coeff, index_out, frame, index_in = index_tuple
-
-        # get output and input locations
-        idx_out = (coeff, batch, index_out)
-        idx_in = (frame, batch, index_in)
-
-        # iterate over frames within sharing window
-        for dframe in range(-share_width // 2, share_width // 2):
-            # get input frame
-            frame_in = _iterator._check_boundaries(frame + dframe, nframes)
+        # iterate over low rank coefficients
+        for coeff in range(ncoeff):
+            # get output frame
+            idx_out = (coeff, batch, index_out)
 
             # get total weight
-            weight = kernel_value * basis[coeff, frame_in]
+            weight = kernel_value * basis[coeff, frame]
 
             # update data point
-            data_out[idx_out] += weight * data_in[idx_in]
+            data_out = _deposit._update(
+                data_out, idx_out, weight * data_in[idx_in])
+
+    @staticmethod
+    @cuda.jit(device=True, inline=True)  # pragma: no cover
+    def _data_viewshare_lowrank(data_out, data_in, index_tuple, kernel_value,
+                                share_width, nframes, basis, ncoeff):
+
+        # unpack indexes
+        batch, frame, index_out, index_in = index_tuple
+
+        # iterate over low rank coefficients
+        for coeff in range(ncoeff):
+            # get output frame
+            idx_out = (coeff, batch, index_out)
+
+            # iterate over frames within sharing window
+            for dframe in range(-share_width // 2, share_width // 2):
+                # get input frame
+                frame_in = _iterator._check_boundaries(frame + dframe, nframes)
+
+                # get input location
+                idx_in = (frame_in, batch, index_in)
+
+                # get total weight
+                weight = kernel_value * basis[coeff, frame_in]
+
+                # update data point
+                data_out = _deposit._update(
+                    data_out, idx_out, weight * data_in[idx_in])

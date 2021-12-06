@@ -1,2 +1,2 @@
-# lr-nufft-torch
-Python-based differentiable NUFFT package optimized for multi-echo and model-based MRI.
+# torchmrifourier
+Pytorch-based differentiable FFT and NUFFT package optimized for multi-echo and model-based MRI.
