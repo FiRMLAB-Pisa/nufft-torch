@@ -24,12 +24,16 @@ model-based MRI reconstructions.
      IEEE Trans Med Imaging. 2014;33(12):2311-2322. doi:10.1109/TMI.2014.2337321
 
 """
+# pylint: disable=no-member
+# pylint: disable=protected-access
+# pylint: disable=too-many-arguments
+
 from typing import List, Tuple, Union
 
 import torch
 from torch import Tensor
 
-from torchmrifourier import src
+from nufftorch import src
 
 
 def nufft(image: Tensor,

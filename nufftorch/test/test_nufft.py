@@ -11,14 +11,14 @@ import pytest
 from torch import testing as tt
 
 
-from torchmrifourier import functional
+from nufftorch import functional
 
 
 from conftest import _get_noncartesian_params
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_nufft(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -31,11 +31,11 @@ def test_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
     result = functional.nufft(data_in, coord=coord, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave, basis", _get_noncartesian_params(lowrank=True))
-def test_nufft_lowrank(ndim, device, img, kdata, wave, basis, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata, basis", _get_noncartesian_params(lowrank=True))
+def test_nufft_lowrank(ndim, device, img, kdata, wave, basis, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -48,11 +48,11 @@ def test_nufft_lowrank(ndim, device, img, kdata, wave, basis, testing_tol, utils
     result = functional.nufft(data_in, coord=coord, device=device, basis=basis)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_even_width_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_even_width_nufft(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -68,11 +68,11 @@ def test_even_width_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
     result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_even_width_explicit_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_even_width_explicit_nufft(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -88,11 +88,11 @@ def test_even_width_explicit_nufft(ndim, device, img, kdata, wave, testing_tol, 
     result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_odd_width_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_odd_width_nufft(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -108,11 +108,11 @@ def test_odd_width_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
     result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_odd_width_explicit_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_odd_width_explicit_nufft(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -128,11 +128,11 @@ def test_odd_width_explicit_nufft(ndim, device, img, kdata, wave, testing_tol, u
     result = functional.nufft(data_in, coord=coord, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_osf_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_osf_nufft(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -149,4 +149,4 @@ def test_osf_nufft(ndim, device, img, kdata, wave, testing_tol, utils):
                               oversamp=oversamp, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)

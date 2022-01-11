@@ -16,16 +16,15 @@ Factory routines to build NUFFT/Toeplitz objects.
 import numpy as np
 import torch
 
-from torchmrifourier.src import _cpu
-from torchmrifourier.src._subroutines import (Apodize,
-                                              BackendBridge,
-                                              Crop,
-                                              FFT,
-                                              Grid,
-                                              IFFT,
-                                              Sparse2Dense,
-                                              Utils,
-                                              ZeroPad)
+from nufftorch.src import _cpu
+from nufftorch.src._subroutines import (Apodize,
+                                        BackendBridge,
+                                        Crop,
+                                        FFT,
+                                        Grid,
+                                        IFFT,
+                                        Utils,
+                                        ZeroPad)
 
 
 class AbstractFactory:
@@ -231,87 +230,6 @@ class AbstractToeplitzFactory(AbstractFactory):
 
         # transform to numba
         mtf = BackendBridge.pytorch2numba(mtf)
-
-        return mtf
-
-
-class CartesianToeplitzFactory(AbstractToeplitzFactory):
-    """Functions to prepare Toeplitz kernel for Cartesian sampling."""
-
-    def __call__(self, sampling_mask, shape, osf, basis, sharing_width, device, threadsperblock):
-        """Actual pre-computation routine."""
-
-        # clone coordinates and dcf to avoid modifications
-        sampling_mask = sampling_mask.clone()
-
-        # get parameters
-        ndim = sampling_mask.shape[-1]
-
-        # get arrays
-        shape = Utils._scalars2arrays(ndim, shape)
-
-        # device_dict
-        device_dict = {'device': device, 'threadsperblock': threadsperblock}
-
-        # actual kernel precomputation
-        mtf = self._prepare_kernel(
-            sampling_mask, shape, osf, basis, sharing_width, device_dict)
-
-        # get oversampled shape for computation
-        grid_shape = Utils._get_oversampled_shape(osf, shape)
-
-        return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
-                'ndim': ndim, 'grid_shape': grid_shape}
-
-    def _prepare_kernel(self, sampling_mask, shape, osf, basis, sharing_width, device_dict):
-        """Core kernel computation sub-routine."""
-
-        # parse size
-        self._parse_coordinate_size(sampling_mask)
-
-        # reformat coordinates
-        self._reformat_coordinates(sampling_mask)
-
-        # calculate interpolator
-        mtf = self._prepare_coefficient_matrix(
-            sampling_mask, shape, basis, sharing_width, device_dict)
-
-        # resample mtf
-        mtf = self._resample_mtf(mtf, osf)
-
-        # post process mtf
-        mtf = self._post_process(mtf)
-
-        return mtf
-
-    def _prepare_coefficient_matrix(self, sampling_mask, shape, basis, sharing_width, device_dict):
-        # process basis
-        basis, basis_adjoint = self._process_basis(
-            basis, device_dict['device'])
-
-        # prepare unitary data for MTF/PSF estimation
-        ones = self._preallocate_unitary_kspace_data(
-            basis_adjoint, device_dict['device'])
-
-        # modulation transfer function
-        mtf = self._sparse2dense(
-            ones, sampling_mask, shape, basis, sharing_width, device_dict)
-
-        return mtf
-
-    def _sparse2dense(self, ones, sampling_mask, shape, basis, sharing_width, device_dict):
-        return Sparse2Dense(device_dict)(ones, sampling_mask, shape, basis, sharing_width)
-
-    def _resample_mtf(self, mtf, osf):
-
-        # IFFT
-        psf = IFFT()(mtf, axes=range(-self.ndim, 0), norm='ortho')
-
-        # Zero-pad
-        psf = ZeroPad(osf, psf.shape[-self.ndim:])(psf)
-
-        # FFT
-        mtf = FFT()(psf, axes=range(-self.ndim, 0), norm='ortho')
 
         return mtf
 

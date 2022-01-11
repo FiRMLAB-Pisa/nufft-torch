@@ -19,10 +19,10 @@ import numba as nb
 import torch
 from torch import Tensor
 
-from torchmrifourier.src import _cpu
+from nufftorch.src import _cpu
 
 if torch.cuda.is_available():
-    from torchmrifourier.src import _cuda
+    from nufftorch.src import _cuda
 
 
 class Utils:
@@ -549,123 +549,6 @@ class Grid:
         self.module._Gridding(input.size, sparse_coeff, basis,
                               sharing_width, self.threadsperblock)(output, input)
         output, input = BackendBridge.numba2pytorch(output, input)
-
-        # reformat for output
-        output = reformat.unravel_grid(output)
-
-        # restore original shape
-        input = reformat.unravel_data(input)
-
-        return output
-
-
-class Dense2Sparse:
-    """Transform dense k-space data to sparse k-space data."""
-    device: Union[str, torch.device]
-    threadsperblock: int
-
-    def __init__(self, device_dict: Dict):
-        self.device = device_dict['device']
-        self.threadsperblock = device_dict['threadsperblock']
-
-        if self.device == 'cpu' or self.device == torch.device('cpu'):
-            self.module = _cpu
-        else:
-            self.module = _cuda
-
-    def __call__(self, input: Tensor, sampling_mask: Tensor, basis_adjoint: Union[None, Tensor]) -> Tensor:
-        """Sample Cartesian k-space data from given grid coordinates.
-
-        Args:
-            input (tensor): Cartesian dense k-space data.
-            sampling_mask (tensor): Non-zero grid locations
-
-        Returns:
-            tensor: Output Cartesian sparse k-space data.
-        """
-        # unpack input
-        ndim = sampling_mask.shape[-1]
-        coord_shape = sampling_mask.shape
-        grid_shape = input.shape[-ndim:]
-
-        # reformat data for computation
-        reformat = DataReshape(coord_shape, grid_shape)
-        input = reformat.ravel_grid(input)
-
-        # preallocate output data
-        output = reformat.generate_empty_data()
-
-        # handle basis
-        if basis_adjoint is not None:
-            basis_adjoint = BackendBridge.pytorch2numba(basis_adjoint)
-
-        # do actual interpolation
-        output, input = BackendBridge.pytorch2numba(output, input)
-        self.module._Dense2Sparse(
-            output.size, (sampling_mask, grid_shape), basis_adjoint, self.threadsperblock)(output, input)
-        output, input = BackendBridge.numba2pytorch(output, input)
-
-        # handle basis
-        if basis_adjoint is not None:
-            basis_adjoint = BackendBridge.numba2pytorch(basis_adjoint)
-
-        # reformat for output
-        output = reformat.unravel_data(output)
-
-        # restore original shape
-        input = reformat.unravel_grid(input)
-
-        return output
-
-
-class Sparse2Dense:
-    """Transform sparse k-space data to dense k-space data."""
-    device: Union[str, torch.device]
-    threadsperblock: int
-
-    def __init__(self, device_dict: Dict):
-        self.device = device_dict['device']
-        self.threadsperblock = device_dict['threadsperblock']
-
-        if self.device == 'cpu' or self.device == torch.device('cpu'):
-            self.module = _cpu
-        else:
-            self.module = _cuda
-
-    def __call__(self, input: Tensor, sampling_mask: Tensor, grid_shape: Tuple[int],
-                 basis: Union[None, Tensor], sharing_width: Union[None, int]) -> Tensor:
-        """Sample Cartesian k-space data from given grid coordinates.
-
-        Args:
-            input (tensor): Cartesian dense k-space data.
-            sampling_mask (tensor): Non-zero grid locations
-
-        Returns:
-            tensor: Output Cartesian sparse k-space data.
-        """
-        # unpack input
-        coord_shape = sampling_mask.shape
-
-        # reformat data for computation
-        reformat = DataReshape(coord_shape, grid_shape)
-        input = reformat.ravel_data(input)
-
-        # preallocate output data
-        output = reformat.generate_empty_grid(basis)
-
-        # handle basis
-        if basis is not None:
-            basis = BackendBridge.pytorch2numba(basis)
-
-        # do actual interpolation
-        output, input = BackendBridge.pytorch2numba(output, input)
-        self.module._Sparse2Dense(
-            output.size, (sampling_mask, grid_shape), basis, sharing_width, self.threadsperblock)(output, input)
-        output, input = BackendBridge.numba2pytorch(output, input)
-
-        # handle basis
-        if basis is not None:
-            basis = BackendBridge.numba2pytorch(basis)
 
         # reformat for output
         output = reformat.unravel_grid(output)

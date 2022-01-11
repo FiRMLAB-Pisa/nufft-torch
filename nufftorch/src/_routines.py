@@ -19,81 +19,17 @@ import torch
 
 from torch import Tensor
 
-from torchmrifourier.src._subroutines import (Apodize,
-                                              Crop,
-                                              DeGrid,
-                                              Dense2Sparse,
-                                              DeviceDispatch,
-                                              FFT,
-                                              Grid,
-                                              IFFT,
-                                              Sparse2Dense,
-                                              Utils,
-                                              Toeplitz,
-                                              ZeroPad)
+from nufftorch.src._subroutines import (Apodize,
+                                        Crop,
+                                        DeGrid,
+                                        DeviceDispatch,
+                                        FFT,
+                                        Grid,
+                                        IFFT,
+                                        Toeplitz,
+                                        ZeroPad)
 
-from torchmrifourier.src._factory import NUFFTFactory, CartesianToeplitzFactory, NonCartesianToeplitzFactory
-
-
-def fft(image: Tensor, sampling_mask: Tensor, basis_adjoint: Union[None, Tensor] = None,
-        device: Union[str, torch.device] = 'cpu', threadsperblock: int = None):
-    """Cartesian FFT."""
-    # Get number of dimensions
-    ndim = sampling_mask.shape[-1]
-
-    # pack device dict
-    device_dict = {'device': device, 'threadsperblock': threadsperblock}
-
-    # Copy input to avoid original data modification
-    image = image.clone()
-
-    # Offload to computational device
-    dispatcher = DeviceDispatch(
-        computation_device=device, data_device=image.device)
-    image, basis_adjoint = dispatcher.dispatch(image, basis_adjoint)
-
-    # FFT
-    kdata = FFT()(image, axes=range(-ndim, 0), norm='ortho')
-
-    # Sample data from grid
-    kdata = Dense2Sparse(device_dict)(image, sampling_mask, basis_adjoint)
-
-    # Bring back to original device
-    kdata, image, basis_adjoint = dispatcher.gather(
-        kdata, image, basis_adjoint)
-
-    return kdata
-
-
-def ifft(kdata: Tensor, sampling_mask: Tensor, shape: Union[int, List[int], Tuple[int]],
-         basis: Union[None, Tensor] = None, sharing_width: Union[None, int] = None,
-         device: Union[str, torch.device] = 'cpu', threadsperblock: int = None):
-    """Cartesian Inverse FFT."""
-    # Get number of dimensions
-    ndim = sampling_mask.shape[-1]
-
-    # Expand grid shape
-    shape = Utils._scalars2arrays(ndim, shape)
-
-    # pack device dict
-    device_dict = {'device': device, 'threadsperblock': threadsperblock}
-
-    # Offload to computational device
-    dispatcher = DeviceDispatch(
-        computation_device=device, data_device=kdata.device)
-    kdata, basis = dispatcher.dispatch(device, basis)
-
-    # Deposit data on grid
-    kdata = Sparse2Dense(device_dict)(
-        kdata, sampling_mask, shape, basis, sharing_width)
-
-    # IFFT
-    image = IFFT()(kdata, axes=range(-ndim, 0), norm='ortho')
-
-    # Bring back to original device
-    image, kdata, basis = dispatcher.gather(image, kdata, basis)
-
-    return image
+from nufftorch.src._factory import NUFFTFactory, NonCartesianToeplitzFactory
 
 
 def prepare_nufft(coord: Tensor,
@@ -176,18 +112,6 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     image, kdata = dispatcher.gather(image, kdata)
 
     return image
-
-
-def prepare_cartesian_toeplitz(sampling_mask: Tensor,
-                               shape: Union[int, List[int], Tuple[int]],
-                               oversamp: Union[float, List[float], Tuple[float]] = 1.0,
-                               basis: Union[Tensor, None] = None,
-                               sharing_width: Union[int, None] = None,
-                               device: Union[str, torch.device] = 'cpu',
-                               threadsperblock: int = 512) -> Dict:
-    """Prepare Toeplitz matrix for Cartesian sampling."""
-    return CartesianToeplitzFactory()(sampling_mask, shape, oversamp,
-                                      basis, sharing_width, device, threadsperblock)
 
 
 def prepare_noncartesian_toeplitz(coord: Tensor,

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""" Setup script for lr-nufft-torch."""
+""" Setup script for nufft-torch."""
 import os
 
 import setuptools
@@ -19,7 +19,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
 
-    url="https://github.com/FiRMLAB-Pisa/lr-nufft-torch",
+    url="https://github.com/FiRMLAB-Pisa/nufft-torch",
 
     author="Matteo Cencini",
     author_email="matteo.cencini@gmail.com",

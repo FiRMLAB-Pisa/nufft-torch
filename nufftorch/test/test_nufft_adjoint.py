@@ -11,14 +11,14 @@ import pytest
 from torch import testing as tt
 
 
-from torchmrifourier import functional
+from nufftorch import functional
 
 
 from conftest import _get_noncartesian_params
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_nufft_adjoint(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -34,11 +34,11 @@ def test_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
         dcf * data_in, coord=coord, shape=shape, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave, basis", _get_noncartesian_params(lowrank=True))
-def test_nufft_adjoint_lowrank(ndim, device, img, kdata, wave, basis, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata, basis", _get_noncartesian_params(lowrank=True))
+def test_nufft_adjoint_lowrank(ndim, device, img, kdata, wave, basis, _testing_tol, utils):
 
     # get input and output
     data_in = img
@@ -54,11 +54,11 @@ def test_nufft_adjoint_lowrank(ndim, device, img, kdata, wave, basis, testing_to
         dcf * data_in, coord=coord, shape=shape, device=device, basis=basis)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave, share_width", _get_noncartesian_params(viewshare=True))
-def test_nufft_adjoint_viewshare(ndim, device, img, kdata, wave, share_width, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata, share_width", _get_noncartesian_params(viewshare=True))
+def test_nufft_adjoint_viewshare(ndim, device, img, kdata, wave, share_width, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -74,11 +74,11 @@ def test_nufft_adjoint_viewshare(ndim, device, img, kdata, wave, share_width, te
         dcf * data_in, coord=coord, shape=shape, device=device, share_width=share_width)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave, basis, share_width", _get_noncartesian_params(lowrank=True, viewshare=True))
-def test_nufft_adjoint_viewshare_lowrank(ndim, device, img, kdata, wave, basis, share_width, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata, basis, share_width", _get_noncartesian_params(lowrank=True, viewshare=True))
+def test_nufft_adjoint_viewshare_lowrank(ndim, device, img, kdata, wave, basis, share_width, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -94,11 +94,11 @@ def test_nufft_adjoint_viewshare_lowrank(ndim, device, img, kdata, wave, basis, 
         dcf * data_in, coord=coord, shape=shape, device=device, basis=basis, share_width=share_width)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_even_width_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_even_width_nufft_adjoint(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -117,11 +117,11 @@ def test_even_width_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, u
         dcf * data_in, coord=coord, shape=shape, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_even_width_explicit_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_even_width_explicit_nufft_adjoint(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -140,11 +140,11 @@ def test_even_width_explicit_nufft_adjoint(ndim, device, img, kdata, wave, testi
         dcf * data_in, coord=coord, shape=shape, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_odd_width_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_odd_width_nufft_adjoint(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -163,11 +163,11 @@ def test_odd_width_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, ut
         dcf * data_in, coord=coord, shape=shape, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_odd_width_explicit_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_odd_width_explicit_nufft_adjoint(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -186,11 +186,11 @@ def test_odd_width_explicit_nufft_adjoint(ndim, device, img, kdata, wave, testin
         dcf * data_in, coord=coord, shape=shape, width=width, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
 
 
-@pytest.mark.parametrize("ndim, device, img, kdata, wave", _get_noncartesian_params())
-def test_osf_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
+@pytest.mark.parametrize("ndim, device, img, wave, kdata", _get_noncartesian_params())
+def test_osf_nufft_adjoint(ndim, device, img, kdata, wave, _testing_tol, utils):
 
     # get input and output
     data_in = kdata
@@ -209,4 +209,4 @@ def test_osf_nufft_adjoint(ndim, device, img, kdata, wave, testing_tol, utils):
                                       oversamp=oversamp, device=device)
     result = utils.normalize(result)
 
-    tt.assert_close(result, expected, rtol=testing_tol, atol=testing_tol)
+    tt.assert_close(result, expected, rtol=_testing_tol, atol=_testing_tol)
