@@ -85,6 +85,9 @@ class DeviceDispatch:
         for tensor in tensors:
             if tensor is not None:
                 tensor.to(self.computation_device)
+                
+        if len(tensors) == 1:
+            tensors = tensors[0]
 
         return tensors
 
@@ -93,6 +96,9 @@ class DeviceDispatch:
         for tensor in tensors:
             if tensor is not None:
                 tensor.to(self.data_device)
+                
+        if len(tensors) == 1:
+            tensors = tensors[0]
 
         return tensors
 
@@ -265,7 +271,7 @@ class ZeroPad:
 
         # get amount of pad over each direction
         pad = np.repeat(padsize, 2)
-        pad.reverse()  # torch take from last to first
+        pad = pad[::-1] # torch take from last to first
 
         self.padsize = tuple(pad)
 
@@ -278,7 +284,9 @@ class ZeroPad:
         Returns:
             tensor: Output zero-padded image.
         """
-        return torch.nn.functional.pad(input, self.padsize, mode="constat", value=0)
+        print(input.shape)
+        print(self.padsize)
+        return torch.nn.functional.pad(input, self.padsize, mode="constant", value=0)
 
 
 class Crop:
@@ -295,7 +303,7 @@ class Crop:
 
         # get amount of crop over each direction
         crop = np.repeat(cropsize, 2)
-        crop.reverse()  # torch take from last to first
+        crop = crop[::-1]  # torch take from last to first
 
         self.cropsize = crop
 
@@ -315,49 +323,20 @@ class BaseFFT:
     """Cartesian (Inverse) Fourier Transform."""
 
     @staticmethod
-    def _normalize_axes(axes, ndim):
-        if axes is None:
-            return tuple(range(ndim))
-
-        return tuple(a % ndim for a in sorted(axes))
-
-    @staticmethod
-    def _fftc(input, oshape=None, axes=None, norm='ortho'):
-
-        # adapt output shape
-        if oshape is None:
-            oshape = input.shape
-        else:
-            oshape = (*input.shape[:-len(oshape)], *oshape)
-
-        # process axes arg
-        ndim = input.ndim
-        axes = BaseFFT._normalize_axes(axes, ndim)
-
+    def _fftc(input, s=None, dim=None, norm='ortho'):
         # actual fft
-        tmp = torch.fft.ifftshift(input, dim=axes)
-        tmp = torch.fft.fftn(tmp, s=oshape, dim=axes, norm=norm)
-        output = torch.fft.fftshift(tmp, dim=axes)
+        tmp = torch.fft.ifftshift(input, dim=dim)
+        tmp = torch.fft.fftn(tmp, s=s, dim=dim, norm=norm)
+        output = torch.fft.fftshift(tmp, dim=dim)
 
         return output
 
     @staticmethod
-    def _ifftc(input, oshape=None, axes=None, norm='ortho'):
-
-        # adapt output shape
-        if oshape is None:
-            oshape = input.shape
-        else:
-            oshape = (*input.shape[:-len(oshape)], *oshape)
-
-        # process axes arg
-        ndim = input.ndim
-        axes = BaseFFT._normalize_axes(axes, ndim)
-
+    def _ifftc(input, s=None, dim=None, norm='ortho'):
         # actual fft
-        tmp = torch.fft.ifftshift(input, dim=axes)
-        tmp = torch.fft.ifftn(tmp, s=oshape, dim=axes, norm=norm)
-        output = torch.fft.fftshift(tmp, dim=axes)
+        tmp = torch.fft.ifftshift(input, dim=dim)
+        tmp = torch.fft.ifftn(tmp, s=s, dim=dim, norm=norm)
+        output = torch.fft.fftshift(tmp, dim=dim)
 
         return output
 
@@ -365,16 +344,26 @@ class BaseFFT:
 class FFT(BaseFFT):
     """Cartesian Fourier Transform."""
 
-    def __call__(self, input, oshape=None, axes=None, center=True, norm='ortho'):
+    def __call__(self, input, oshape=None, axes=-1, center=True, norm='ortho'):
         # allow for single scalar axis
         if np.isscalar(axes):
             axes = [axes]
 
         # transform to list to allow range object
-        axes = list(axes)
+        if isinstance(axes, list) is False:
+            axes = list(axes)   
+            
+        # process axes arg
+        ndim = len(axes)
+
+        # adapt output shape
+        if oshape is None:
+            oshape = input.shape[-ndim:]
+        else:
+            oshape = oshape[-ndim:]
 
         if center:
-            output = BaseFFT._fftc(input, oshape=oshape, axes=axes, norm=norm)
+            output = BaseFFT._fftc(input, s=oshape, dim=axes, norm=norm)
         else:
             output = torch.fft.fftn(input, s=oshape, dim=axes, norm=norm)
 
@@ -387,13 +376,23 @@ class FFT(BaseFFT):
 class IFFT(BaseFFT):
     """Cartesian Inverse Fourier Transform."""
 
-    def __call__(self, input, oshape=None, axes=None, center=True, norm='ortho'):
+    def __call__(self, input, oshape=None, axes=-1, center=True, norm='ortho'):
         # allow for single scalar axis
         if np.isscalar(axes):
             axes = [axes]
 
         # transform to list to allow range object
-        axes = list(axes)
+        if isinstance(axes, list) is False:
+            axes = list(axes)
+        
+        # process axes arg
+        ndim = len(axes)
+
+        # adapt output shape
+        if oshape is None:
+            oshape = input.shape[-ndim:]
+        else:
+            oshape = oshape[-ndim:]
 
         if center:
             output = BaseFFT._ifftc(input, oshape=oshape, axes=axes, norm=norm)
@@ -480,7 +479,7 @@ class DeGrid:
             tensor: Output Non-Cartesian k-space data.
         """
         # unpack input
-        sparse_coeff = kernel_dict['sparse_coeff']
+        sparse_coeff = kernel_dict['sparse_coefficients']
         coord_shape = kernel_dict['coord_shape']
         grid_shape = kernel_dict['grid_shape']
         basis_adjoint = kernel_dict['basis_adjoint']
@@ -531,7 +530,7 @@ class Grid:
             tensor: Cartesian sparse k-space data.
         """
         # unpack input
-        sparse_coeff = kernel_dict['sparse_coeff']
+        sparse_coeff = kernel_dict['sparse_coefficients']
         coord_shape = kernel_dict['coord_shape']
         grid_shape = kernel_dict['grid_shape']
         basis = kernel_dict['basis']

@@ -89,7 +89,7 @@ class NUFFTFactory(AbstractFactory):
         self._parse_coordinate_size(coord)
 
         # reformat coordinates
-        self._reformat_coordinates(coord)
+        coord = self._reformat_coordinates(coord)
 
         # calculate interpolator
         kernel_tuple = self._prepare_sparse_coefficient_matrix(
@@ -108,6 +108,8 @@ class NUFFTFactory(AbstractFactory):
 
         # prepare kernel dictionary
         kernel_dict = {'sparse_coefficients': kernel_tuple,
+                       'coord_shape': coord.shape,
+                       'grid_shape': shape,
                        'width': width,
                        'basis': basis,
                        'basis_adjoint': basis_adjoint,
@@ -148,12 +150,11 @@ class NUFFTFactory(AbstractFactory):
 
         # actual computation
         for i in range(self.ndim):
-            value[i], index[i], coord[i] = BackendBridge.pytorch2numba(
+            val, ind, coo = BackendBridge.pytorch2numba(
                 value[i], index[i], coord[i])
-            _cpu.prepare_sparse_coefficient_matrix(
-                value[i], index[i], coord[i], beta[i], shape[i])
-            value[i], index[i], coord[i] = BackendBridge.numba2pytorch(
-                value[i], index[i], coord[i])
+            _cpu._prepare_sparse_coefficient_matrix(
+                val, ind, coo, beta[i], shape[i])
+
 
         # reformat coefficients
         self._reformat_sparse_coefficients(value, index, width, device)
@@ -277,7 +278,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         self._parse_coordinate_size(coord)
 
         # reformat coordinates
-        self._reformat_coordinates(coord)
+        coord = self._reformat_coordinates(coord)
 
         # calculate interpolator
         mtf = self._prepare_coefficient_matrix(

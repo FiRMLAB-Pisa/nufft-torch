@@ -33,7 +33,7 @@ from typing import List, Tuple, Union
 import torch
 from torch import Tensor
 
-from nufftorch import src
+from nufftorch.src import _routines
 
 
 def nufft(image: Tensor,
@@ -41,7 +41,8 @@ def nufft(image: Tensor,
           oversamp: Union[float, List[float], Tuple[float]] = 1.125,
           width: Union[int, List[int], Tuple[int]] = 3,
           basis: Union[None, Tensor] = None,
-          device: Union[str, torch.device] = 'cpu') -> Tensor:
+          device: Union[str, torch.device] = 'cpu',
+          threadsperblock: int = 512) -> Tensor:
     """Non-uniform Fast Fourier Transform.
     Args:
         image (tensor): Input data in image space of shape [n, ..., nz, ny, nx],
@@ -72,11 +73,11 @@ def nufft(image: Tensor,
     shape = image.shape[-ndim:]
 
     # Prepare interpolator object
-    interpolator = src._routines.prepare_nufft(
-        coord, shape, oversamp, width, basis, None, device)
+    interpolator = _routines.prepare_nufft(
+        coord, shape, oversamp, width, basis, None, device, threadsperblock)
 
     # Calculate k-space data
-    kdata = src._routines.nufft(image, interpolator)
+    kdata = _routines.nufft(image, interpolator)
 
     return kdata
 
@@ -88,7 +89,8 @@ def nufft_adjoint(kdata: Tensor,
                   width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
                   sharing_width: Union[None, int] = None,
-                  device: Union[str, torch.device] = 'cpu') -> Tensor:
+                  device: Union[str, torch.device] = 'cpu',
+                  threadsperblock: int = 512) -> Tensor:
     """Adjoint Non-uniform Fast Fourier Transform.
     Args:
         kdata (tensor): Input data in  Fourier space of shape [nframes, ..., coord_shape],
@@ -117,10 +119,10 @@ def nufft_adjoint(kdata: Tensor,
         IEEE transactions on medical imaging, 24(6), 799-808.
     """
     # Prepare interpolator object
-    interpolator = src._routines.prepare_nufft(
-        coord, shape, oversamp, width, basis, sharing_width, device)
+    interpolator = _routines.prepare_nufft(
+        coord, shape, oversamp, width, basis, sharing_width, device, threadsperblock)
 
     # Calculate k-space data
-    image = src._routines.nufft_adjoint(kdata, interpolator)
+    image = _routines.nufft_adjoint(kdata, interpolator)
 
     return image

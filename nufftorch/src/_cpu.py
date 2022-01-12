@@ -30,7 +30,7 @@ def _prepare_sparse_coefficient_matrix(value, index, coord, beta, shape):
         x_0 = np.ceil(coord[i] - width / 2)
 
         for x_i in range(width):
-            val = _kernel._function(
+            val = _kernel_function(
                 ((x_0 + x_i) - coord[i]) / (width / 2), beta)
 
             # save interpolator
@@ -454,6 +454,8 @@ class _kernel(_common._kernel):
     _evaluate = staticmethod(
         nb.njit(_common._kernel._evaluate, fastmath=True, cache=True))
 
+
+_kernel_function = _kernel._function
 
 
 class _gather(_common._gather):

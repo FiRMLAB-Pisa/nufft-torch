@@ -38,9 +38,10 @@ def prepare_nufft(coord: Tensor,
                   width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
                   sharing_width: Union[None, int] = None,
-                  device: Union[str, torch.device] = 'cpu') -> Dict:
+                  device: Union[str, torch.device] = 'cpu',
+                  threadsperblock: int = 512) -> Dict:
     """Precompute NUFFT coefficients."""
-    return NUFFTFactory()(coord, shape, width, oversamp, basis, sharing_width, device)
+    return NUFFTFactory()(coord, shape, width, oversamp, basis, sharing_width, device, threadsperblock)
 
 
 def nufft(image: Tensor, interpolator: Dict) -> Tensor:
@@ -63,7 +64,7 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     image = dispatcher.dispatch(image)
 
     # Apodize
-    Apodize(ndim, oversamp, width, beta, device)(image)
+    Apodize(image.shape[-ndim:], oversamp, width, beta, device)(image)
 
     # Zero-pad
     image = ZeroPad(oversamp, image.shape[-ndim:])(image)
