@@ -6,15 +6,10 @@
 # pylint: disable=unused-argument
 
 import pytest
-import warnings
-
 
 import torch
-from numba import NumbaPerformanceWarning
-warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
 
 from nufftorch import functional
-
 
 from conftest import _get_noncartesian_params
 
