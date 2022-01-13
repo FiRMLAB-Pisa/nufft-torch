@@ -174,6 +174,10 @@ class DataReshape:
             tensor: output 3D raveled data tensor of shape
                     (n_frames, n_batches, n_spectral_locations).
         """
+        # get input device and data type
+        self.device = input.device
+        self.dtype = input.dtype
+        
         # keep original batch shape
         self.batch_axis_shape = input.shape[1:-self.ndim]
         self.nbatches = np.prod(self.batch_axis_shape)
@@ -284,8 +288,6 @@ class ZeroPad:
         Returns:
             tensor: Output zero-padded image.
         """
-        print(input.shape)
-        print(self.padsize)
         return torch.nn.functional.pad(input, self.padsize, mode="constant", value=0)
 
 
@@ -293,19 +295,8 @@ class Crop:
     """Image-domain cropping operator to select targeted FOV."""
     cropsize: Tuple[int]
 
-    def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]):
-        # get oversampled shape
-        oshape = Utils._get_oversampled_shape(oversamp, shape)
-
-        # get crop size
-        cropsize = [(shape[axis] - oshape[axis]) //
-                    2 for axis in range(len(shape))]
-
-        # get amount of crop over each direction
-        crop = np.repeat(cropsize, 2)
-        crop = crop[::-1]  # torch take from last to first
-
-        self.cropsize = crop
+    def __init__(self, shape: Union[List[int], Tuple[int]]):
+        self.oshape = shape
 
     def __call__(self, input: Tensor) -> Tensor:
         """Apply zero padding step.
@@ -316,11 +307,27 @@ class Crop:
         Returns:
             tensor: Output zero-padded image.
         """
-        return torch.nn.functional.pad(input, self.cropsize)
+        # unpack
+        oshape = self.oshape
+        
+        # get number of dimensions
+        ndim = len(oshape)
+        
+        # get crop size
+        cropsize = [(oshape[axis] - input.shape[axis]) // 2 for axis in range(-ndim, 0)]
+        cropsize.reverse()
+
+        # get amount of crop over each direction
+        crop = np.repeat(cropsize, 2)
+        crop = crop[::-1]  # torch take from last to first
+        
+        return torch.nn.functional.pad(input, tuple(crop))
 
 
 class BaseFFT:
     """Cartesian (Inverse) Fourier Transform."""
+    def __init__(self, input):
+        self.isreal = not(torch.is_complex(input))
 
     @staticmethod
     def _fftc(input, s=None, dim=None, norm='ortho'):
@@ -369,6 +376,10 @@ class FFT(BaseFFT):
 
         if torch.is_complex(input) and input.dtype != output.dtype:
             output = output.to(input.dtype, copy=False)
+            
+        # if required discard imaginary
+        if self.isreal:
+            output = output.real
 
         return output
 
@@ -395,12 +406,13 @@ class IFFT(BaseFFT):
             oshape = oshape[-ndim:]
 
         if center:
-            output = BaseFFT._ifftc(input, oshape=oshape, axes=axes, norm=norm)
+            output = BaseFFT._ifftc(input, s=oshape, dim=axes, norm=norm)
         else:
             output = torch.fft.ifftn(input, s=oshape, dim=axes, norm=norm)
 
-        if torch.is_complex(input) and input.dtype != output.dtype:
-            output = output.to(input.dtype, copy=False)
+        # if required discard imaginary
+        if self.isreal:
+            output = output.real
 
         return output
 
@@ -418,7 +430,10 @@ class BackendBridge:
         Returns:
             PyTorch tensor.
         """
-        is_cuda = nb.cuda.is_cuda_array(arrays[0])
+        try:
+            is_cuda = nb.cuda.is_cuda_array(arrays[0])
+        except:
+            is_cuda = False
 
         if is_cuda:
             tensors = [torch.as_tensor(array, device="cuda")
@@ -429,8 +444,11 @@ class BackendBridge:
         for tensor in tensors:
             tensor.requires_grad = requires_grad
             tensor = tensor.contiguous()
+        
+        if len(tensors) == 1:
+            tensors = tensors[0]
 
-        return tuple(tensors)
+        return tensors
 
     @staticmethod
     def pytorch2numba(*tensors):  # pragma: no cover
@@ -446,11 +464,14 @@ class BackendBridge:
         device = tensors[0].device
 
         if device.type == 'cpu':
-            arrays = [tensor.detach().contiguous().numpy()
+            arrays = [tensor.resolve_conj().detach().contiguous().numpy()
                       for tensor in tensors]
         else:
-            arrays = [nb.cuda.as_cuda_array(tensor.contiguous())
+            arrays = [nb.cuda.as_cuda_array(tensor.resolve_conj().detach().contiguous())
                       for tensor in tensors]
+            
+        if len(arrays) == 1:
+            arrays = arrays[0]
 
         return arrays
 
@@ -493,8 +514,7 @@ class DeGrid:
 
         # do actual interpolation
         output, input = BackendBridge.pytorch2numba(output, input)
-        self.module._DeGridding(
-            output.size, sparse_coeff, basis_adjoint, self.threadsperblock)(output, input)
+        self.module._DeGridding(output.size, sparse_coeff, basis_adjoint, self.threadsperblock)(output, input)
         output, input = BackendBridge.numba2pytorch(output, input)
 
         # reformat for output
@@ -534,7 +554,6 @@ class Grid:
         coord_shape = kernel_dict['coord_shape']
         grid_shape = kernel_dict['grid_shape']
         basis = kernel_dict['basis']
-        sharing_width = kernel_dict['sharing_width']
 
         # reformat data for computation
         reformat = DataReshape(coord_shape, grid_shape)
@@ -545,8 +564,7 @@ class Grid:
 
         # do actual interpolation
         output, input = BackendBridge.pytorch2numba(output, input)
-        self.module._Gridding(input.size, sparse_coeff, basis,
-                              sharing_width, self.threadsperblock)(output, input)
+        self.module._Gridding(input.size, sparse_coeff, basis, self.threadsperblock)(output, input)
         output, input = BackendBridge.numba2pytorch(output, input)
 
         # reformat for output

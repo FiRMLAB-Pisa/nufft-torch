@@ -12,7 +12,7 @@ import torch
 
 
 def _img_size_list():
-    return [3, 4]
+    return [9]
 
 
 def _dim_list():
@@ -29,38 +29,32 @@ def _device_list():
 
 
 def _data_dtype_list():
-    return [torch.float32, torch.float64, torch.complex64, torch.complex128]
+    return [torch.complex64]
 
 
 def _coord_type_list():
-    return [torch.float32, torch.float64]
+    return [torch.float32]
 
 
 def _basis_dtype_list():
-    return [torch.float32, torch.float64, torch.complex64, torch.complex128]
+    return [torch.float32, torch.complex64]
 
 
 def _testing_multiple_coils():
-    return [1, 2, 3]
+    return [1, 2]
 
 
 def _testing_multiple_echoes():
-    return [1, 2, 3]
+    return [1, 2]
 
 
 def _testing_multiple_slices():
-    return [1, 2, 3]
+    return [1, 2]
 
 
 def _testing_multiple_frames():
-    return [1, 2, 3]
+    return [1, 2]
 
-# %% fixtures
-
-
-@pytest.fixture
-def _testing_tol():
-    return 1e-01
 
 # %% Utils
 
@@ -68,9 +62,19 @@ def _testing_tol():
 class _Utils:
 
     @staticmethod
-    def normalize(data_in):
+    def normalize(data_in, ndim):
         """Normalize Input between 0 and 1."""
-        scale = torch.max(torch.abs(data_in.ravel()))
+        print(data_in.shape)
+        center = int(data_in.shape[-1] // 2)
+        
+        if ndim == 2:
+            scale = torch.abs(data_in[..., center, center])
+            scale = scale[..., None, None]
+            
+        if ndim == 3:
+            scale = torch.abs(data_in[..., center, center, center])
+            scale = scale[..., None, None, None]
+
         return data_in / scale
 
 
@@ -106,8 +110,13 @@ class _ktSpaceTrajectory():
 
         # reshape coordinates and build dcf / matrix size
         self.coordinates = coord
-        self.density_comp_factor = torch.ones(
-            self.coordinates.shape[:-1], dtype=dtype)
+        
+        if ndim == 2:
+            self.density_comp_factor = torch.ones(self.coordinates.shape[:-1], dtype=dtype)[:, None, None, None, :]
+            
+        elif ndim == 3:
+            self.density_comp_factor = torch.ones(self.coordinates.shape[:-1], dtype=dtype)[:, None, None, :]
+
         self.acquisition_matrix = npix
 
 
@@ -149,7 +158,7 @@ def _lowrank_subspace_projection(dtype, nframes):
 
 
 def _get_noncartesian_params(lowrank: bool = False,  # pylint: disable=too-many-locals
-                             selfadjoint: bool = False, viewshare: bool = False):
+                             selfadjoint: bool = False):
 
     # get input argument combinations
     args = [_dim_list(),
@@ -165,10 +174,6 @@ def _get_noncartesian_params(lowrank: bool = False,  # pylint: disable=too-many-
     # add lowrank basis if enabled
     if lowrank is True:
         args.append(_basis_dtype_list())
-
-    # sliding window width if enabled
-    if viewshare is True:
-        args.append([0])
 
     # get combinations
     args = list(itertools.product(*args))
@@ -196,18 +201,10 @@ def _get_noncartesian_params(lowrank: bool = False,  # pylint: disable=too-many-
         if selfadjoint is False:
             tmp.append(_kt_space_data(
                 ndim, device_id, data_type, nframes, nechoes, ncoils, nslices, npix))
-
-        if viewshare is True and lowrank is False:
-            share_width = arg[9]
-            tmp.append(share_width)
             
         if lowrank is True:
             basis_type = arg[9]
             tmp.append(_lowrank_subspace_projection(basis_type, nframes))
-
-        if lowrank is True and viewshare is True:
-            share_width = arg[10]
-            tmp.append(share_width)
             
         test_data.append(tmp)
 

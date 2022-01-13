@@ -37,11 +37,10 @@ def prepare_nufft(coord: Tensor,
                   oversamp: Union[float, List[float], Tuple[float]] = 1.125,
                   width: Union[int, List[int], Tuple[int]] = 3,
                   basis: Union[None, Tensor] = None,
-                  sharing_width: Union[None, int] = None,
                   device: Union[str, torch.device] = 'cpu',
                   threadsperblock: int = 512) -> Dict:
     """Precompute NUFFT coefficients."""
-    return NUFFTFactory()(coord, shape, width, oversamp, basis, sharing_width, device, threadsperblock)
+    return NUFFTFactory()(coord, shape, width, oversamp, basis, device, threadsperblock)
 
 
 def nufft(image: Tensor, interpolator: Dict) -> Tensor:
@@ -70,7 +69,7 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     image = ZeroPad(oversamp, image.shape[-ndim:])(image)
 
     # FFT
-    kdata = FFT()(image, axes=range(-ndim, 0), norm='ortho')
+    kdata = FFT(image)(image, axes=range(-ndim, 0), norm='ortho')
 
     # Interpolate
     kdata = DeGrid(device_dict)(kdata, kernel_dict)
@@ -86,6 +85,7 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     # unpack interpolator
     ndim = interpolator['ndim']
     oversamp = interpolator['oversamp']
+    shape = interpolator['shape']
     width = interpolator['width']
     beta = interpolator['beta']
     kernel_dict = interpolator['kernel_dict']
@@ -95,19 +95,19 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     # Offload to computational device
     dispatcher = DeviceDispatch(
         computation_device=device, data_device=kdata.device)
-    kdata = dispatcher.dispatch(device)
+    kdata = dispatcher.dispatch(kdata)
 
     # Gridding
     kdata = Grid(device_dict)(kdata, kernel_dict)
 
     # IFFT
-    image = IFFT()(kdata, axes=range(-ndim, 0), norm='ortho')
+    image = IFFT(kdata)(kdata, axes=range(-ndim, 0), norm='ortho')
 
     # Crop
-    image = Crop(oversamp, image.shape[:-ndim])(image)
+    image = Crop(shape[-ndim:])(image)
 
     # Apodize
-    Apodize(ndim, oversamp, width, beta, device)(image)
+    Apodize(shape[-ndim:], oversamp, width, beta, device)(image)
 
     # Bring back to original device
     image, kdata = dispatcher.gather(image, kdata)
@@ -121,13 +121,12 @@ def prepare_noncartesian_toeplitz(coord: Tensor,
                                   comp_oversamp: Union[float, List[float], Tuple[float]] = 1.0,
                                   width: Union[int, List[int], Tuple[int]] = 3,
                                   basis: Union[Tensor, None] = None,
-                                  sharing_width: Union[int, None] = None,
                                   device: Union[str, torch.device] = 'cpu',
                                   threadsperblock: int = 512,
                                   dcf: Union[Tensor, None] = None) -> Dict:
     """Prepare Toeplitz matrix for Non-Cartesian sampling."""
     return NonCartesianToeplitzFactory()(coord, shape, prep_oversamp, comp_oversamp, width,
-                                         basis, sharing_width, device, threadsperblock, dcf)
+                                         basis, device, threadsperblock, dcf)
 
 
 def toeplitz_convolution(image: Tensor, toeplitz_dict: Dict) -> Tensor:

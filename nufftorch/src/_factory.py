@@ -48,9 +48,8 @@ class AbstractFactory:
 class NUFFTFactory(AbstractFactory):
     """Functions to prepare NUFFT operator."""
 
-    def __call__(self, coord, shape, width, oversamp, basis, sharing_width, device, threadsperblock):
+    def __call__(self, coord, shape, width, oversamp, basis, device, threadsperblock):
         """Actual pre-computation routine."""
-
         # get parameters
         ndim = coord.shape[-1]
 
@@ -68,13 +67,14 @@ class NUFFTFactory(AbstractFactory):
 
         # compute interpolator
         kernel_dict = self._prepare_kernel(
-            coord, grid_shape, width, beta, basis, sharing_width, device)
+            coord, grid_shape, width, beta, basis, device)
 
         # device_dict
         device_dict = {'device': device, 'threadsperblock': threadsperblock}
 
         # create interpolator dict
         interpolator = {'ndim': ndim,
+                        'shape': shape,
                         'oversamp': oversamp,
                         'width': width,
                         'beta': beta,
@@ -83,12 +83,13 @@ class NUFFTFactory(AbstractFactory):
 
         return interpolator
 
-    def _prepare_kernel(self, coord, shape, width, beta, basis, sharing_width, device):
+    def _prepare_kernel(self, coord, shape, width, beta, basis, device):
 
         # parse size
         self._parse_coordinate_size(coord)
 
         # reformat coordinates
+        coord_shape = coord.shape
         coord = self._reformat_coordinates(coord)
 
         # calculate interpolator
@@ -101,19 +102,18 @@ class NUFFTFactory(AbstractFactory):
             basis_adjoint = basis.conj().T
 
             # convert to numpy or numba cuda array
-            basis = Utils.pytorch2numba(basis.to(device))
-            basis_adjoint = Utils.pytorch2numba(basis_adjoint.to(device))
+            basis = BackendBridge.pytorch2numba(basis.to(device))
+            basis_adjoint = BackendBridge.pytorch2numba(basis_adjoint.to(device))
         else:
             basis_adjoint = None
 
         # prepare kernel dictionary
         kernel_dict = {'sparse_coefficients': kernel_tuple,
-                       'coord_shape': coord.shape,
+                       'coord_shape': coord_shape,
                        'grid_shape': shape,
                        'width': width,
                        'basis': basis,
-                       'basis_adjoint': basis_adjoint,
-                       'sharing_width': sharing_width}
+                       'basis_adjoint': basis_adjoint}
 
         return kernel_dict
 
@@ -136,12 +136,20 @@ class NUFFTFactory(AbstractFactory):
 
     def _reformat_sparse_coefficients(self, value, index, width, device):
         for i in range(self.ndim):
+            # reshape
             value[i] = value[i].reshape(
                 [self.nframes, self.npts, width[i]]).to(device)
             index[i] = index[i].reshape(
                 [self.nframes, self.npts, width[i]]).to(device)
-            value[i], index[i] = BackendBridge.pytorch2numba(
-                value[i], index[i])
+            
+        # stack (support isotropic kernel only)
+        value = torch.stack(value, dim=0)
+        index = torch.stack(index, dim=0)
+        
+        # convert to numpy / numba array
+        value, index = BackendBridge.pytorch2numba(value, index)
+        
+        return value, index
 
     def _prepare_sparse_coefficient_matrix(self, coord, shape, width, beta, device):
 
@@ -150,17 +158,19 @@ class NUFFTFactory(AbstractFactory):
 
         # actual computation
         for i in range(self.ndim):
-            val, ind, coo = BackendBridge.pytorch2numba(
-                value[i], index[i], coord[i])
-            _cpu._prepare_sparse_coefficient_matrix(
-                val, ind, coo, beta[i], shape[i])
-
+            val, ind, coo = BackendBridge.pytorch2numba(value[i], index[i], coord[i])
+            _cpu._prepare_sparse_coefficient_matrix(val, ind, coo, beta[i], shape[i])
 
         # reformat coefficients
-        self._reformat_sparse_coefficients(value, index, width, device)
-
+        value, index = self._reformat_sparse_coefficients(value, index, width, device)
+        
+        # reformat grid shape and kernel width
+        shape = torch.tensor(shape, device=device)
+        width = torch.tensor(width, device=device)
+        shape, width = BackendBridge.pytorch2numba(shape, width)
+        
         # pack kernel tuple
-        kernel_tuple = (tuple(value), tuple(index), shape)
+        kernel_tuple = (value, index, width, shape)
 
         return kernel_tuple
 
@@ -239,7 +249,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
     """Functions to prepare Toeplitz kernel for Non-Cartesian sampling."""
 
     def __call__(self, coord, shape, prep_osf, comp_osf, width,
-                 basis, sharing_width, device, threadsperblock, dcf):
+                 basis, device, threadsperblock, dcf):
         """Actual pre-computation routine."""
         # clone coordinates and dcf to avoid modifications
         coord = coord.clone()
@@ -264,7 +274,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         # actual kernel precomputation
         mtf = self._prepare_kernel(
-            coord, grid_shape, prep_osf, comp_osf, width, beta, basis, sharing_width, device_dict, dcf)
+            coord, grid_shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf)
 
         # get grid shape for computation
         grid_shape = Utils._get_oversampled_shape(shape, comp_osf)
@@ -272,7 +282,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
                 'ndim': ndim, 'grid_shape': grid_shape}
 
-    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, sharing_width, device_dict, dcf):
+    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf):
         """Core kernel computation sub-routine."""
         # parse size
         self._parse_coordinate_size(coord)
@@ -282,7 +292,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         # calculate interpolator
         mtf = self._prepare_coefficient_matrix(
-            coord, shape, prep_osf, width, basis, sharing_width, device_dict, dcf)
+            coord, shape, prep_osf, width, basis, device_dict, dcf)
 
         # resample mtf
         mtf = self._resample_mtf(
@@ -293,7 +303,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         return mtf
 
-    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, basis, sharing_width, device_dict, dcf):
+    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, basis, device_dict, dcf):
         # process basis
         basis, basis_adjoint = self._process_basis(
             basis, device_dict['device'])
@@ -307,7 +317,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         # calculate modulation transfer function
         mtf = self._gridding(ones, coord, shape, width,
-                             oversamp, basis, sharing_width, device_dict)
+                             oversamp, basis, device_dict)
 
         return mtf
 
@@ -326,10 +336,10 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         return dcf
 
-    def _gridding(self, ones, coord, shape, width, oversamp, basis, sharing_width, device):
+    def _gridding(self, ones, coord, shape, width, oversamp, basis, device):
         # prepare NUFFT object
         nufft_dict = NUFFTFactory()(coord, shape, width, oversamp,
-                                    basis, sharing_width, device)
+                                    basis, device)
 
         # compute mtf
         return Grid(device)(ones, nufft_dict['kernel_dict'])

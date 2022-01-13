@@ -28,11 +28,11 @@ class _iterator:
 
     @staticmethod
     def _nested_range(*args):
-        return [range(i) for i in args]
+        return [list(range(i)) for i in args]
 
     @staticmethod
     def _get_neighbourhood(*args):
-        return tuple(itertools.product(_iterator._nested_range(*args)))
+        return tuple(itertools.product(*_iterator._nested_range(*args)))
 
     @staticmethod
     def _check_boundaries(frame, nframes):
@@ -45,53 +45,41 @@ class _iterator:
 class _kernel:
 
     @staticmethod
-    def _prod(value_tuple: Tuple[float], row_index: int, col_index: int) -> float:
-        value = value_tuple[0][row_index][col_index]
-
-        for i in range(1, len(value_tuple)):
-            value *= value_tuple[i][row_index][col_index]
+    def _prod(value_arr, row_index, col_index, slice_index):
+        value = value_arr[0][row_index][col_index][slice_index[0]]
+        
+        for i in range(1, value_arr.shape[0]):
+            value *= value_arr[i][row_index][col_index][slice_index[i]]
 
         return value
 
     @staticmethod
-    def _ravel_index(index_tuple: Tuple[float], grid_shape: Tuple[int],
-                     row_index: int, col_index: int) -> int:
+    def _ravel_index(index_arr, grid_shape, row_index, col_index, slice_index):
+        index = index_arr[0][row_index][col_index][slice_index[0]]
 
-        index = index_tuple[0][row_index][col_index]
-
-        for i in range(1, len(index_tuple)):
-            index += index_tuple[i][row_index][col_index] * grid_shape[i-1]
+        for i in range(1, index_arr.shape[0]):
+            index += index_arr[i][row_index][col_index][slice_index[i]] * grid_shape[i-1]
 
         return index
 
     @staticmethod
-    def _evaluate(sample_index: int,
-                  neighbour_index: int,
-                  kernel_tuple: Tuple[Tuple[float],
-                                      Tuple[int],
-                                      Tuple[int]]) -> Tuple[float, int]:
-
-        # unpack kernel tuple
-        value_tuple, index_tuple, grid_shape = kernel_tuple
-
-        # get kernel value
-        value = _kernel._prod(
-            value_tuple, sample_index, neighbour_index)
-
-        # get flattened neighbour index
-        index = _kernel._ravel_index(
-            index_tuple, grid_shape, sample_index, neighbour_index)
-
-        return value, index
+    def _make_evaluate(_prod, _ravel_index):   
+        def _evaluate(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, kernel_width, grid_shape):  
+            # get kernel value
+            value = _prod(kernel_value, frame, sample_idx, neighbour_idx)
+    
+            # get flattened neighbour index
+            index = _ravel_index(kernel_idx, grid_shape, frame, sample_idx, neighbour_idx)
+            
+            return value, index
+        
+        return _evaluate
 
 
 class _gather:
 
     @staticmethod
-    def _data(data_out, data_in, index_tuple, kernel_value):
-        # unpack indexes
-        batch, frame, index_out, index_in = index_tuple
-
+    def _data(data_out, data_in, frame, batch, index_out, index_in, kernel_value):
         # get output and input locations
         idx_out = (frame, batch, index_out)
         idx_in = (frame, batch, index_in)
@@ -100,13 +88,10 @@ class _gather:
         data_out[idx_out] += kernel_value * data_in[idx_in]
 
     @staticmethod
-    def _data_lowrank(data_out, data_in, index_tuple, kernel_value, basis_adjoint, ncoeff):
-        # unpack indexes
-        frame, batch, index_out, index_in = index_tuple
-
+    def _data_lowrank(data_out, data_in, frame, batch, index_out, index_in, kernel_value, basis_adjoint, ncoeff):
         # get output locations
         idx_out = (frame, batch, index_out)
-
+        
         # iterate over subspace coefficients
         for coeff in range(ncoeff):
             # get input locations
