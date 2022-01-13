@@ -15,7 +15,6 @@ CUDA specific subroutines.
 
 from typing import Callable
 
-import numpy as np
 from numba import cuda
 
 from nufftorch.src import _common
@@ -51,7 +50,7 @@ class _DeGridding:
         kernel_width = kernel_tuple[-2]
 
         # get kernel neighbourhood
-        kernel_neighbourhood = np.array(_iterator._get_neighbourhood(*kernel_width))
+        kernel_neighbourhood = cuda.to_device(_iterator._get_neighbourhood(*kernel_width))
 
         # calculate blocks per grid
         blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
@@ -61,22 +60,22 @@ class _DeGridding:
             callback = _DeGridding._get_callback()
 
             def _apply(self, noncart_data, cart_data):
-                return callback(noncart_data, cart_data,
-                                kernel_sparse_coefficients,
-                                kernel_neighbourhood)
+                return callback[blockspergrid, threadsperblock](noncart_data, cart_data,
+                                                                kernel_sparse_coefficients,
+                                                                kernel_neighbourhood)
 
         else:
             callback = _DeGridding._get_lowrank_callback()
 
             def _apply(self, noncart_data, cart_data):
-                return callback(noncart_data, cart_data,
-                                kernel_sparse_coefficients,
-                                kernel_neighbourhood,
-                                basis_adjoint)
+                return callback[blockspergrid, threadsperblock](noncart_data, cart_data,
+                                                                kernel_sparse_coefficients,
+                                                                kernel_neighbourhood,
+                                                                basis_adjoint)
 
         # assign
-        _DeGridding.__call__ = _apply[blockspergrid, threadsperblock]
-
+        _DeGridding.__call__ = _apply
+        
     @staticmethod
     def _get_callback():
 
@@ -164,38 +163,38 @@ class _Gridding:
 
     apply: Callable
 
-    def __init__(self, data_size, kernel_tuple, basis, sharing_width, threadsperblock):
+    def __init__(self, data_size, kernel_tuple, basis, threadsperblock):
 
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_tuple
         kernel_width = kernel_tuple[-2]
 
         # get kernel neighbourhood
-        kernel_neighbourhood = np.array(_iterator._get_neighbourhood(*kernel_width))
+        kernel_neighbourhood = cuda.to_device(_iterator._get_neighbourhood(*kernel_width))
 
         # calculate blocks per grid
         blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
 
         # select correct sub-routine
-        if basis is None and sharing_width is None:
+        if basis is None:
             callback = _Gridding._get_callback()
 
             def _apply(self, cart_data, noncart_data):
-                return callback(cart_data, noncart_data,
-                                kernel_sparse_coefficients,
-                                kernel_neighbourhood)
+                return callback[blockspergrid, threadsperblock](cart_data, noncart_data,
+                                                                kernel_sparse_coefficients,
+                                                                kernel_neighbourhood)
 
         else:
             callback = _Gridding._get_lowrank_callback()
 
             def _apply(self, cart_data, noncart_data):
-                return callback(cart_data, noncart_data,
-                                kernel_sparse_coefficients,
-                                kernel_neighbourhood,
-                                basis)
+                return callback[blockspergrid, threadsperblock](cart_data, noncart_data,
+                                                                kernel_sparse_coefficients,
+                                                                kernel_neighbourhood,
+                                                                basis)
 
         # assign
-        _Gridding.__call__ = _apply[blockspergrid, threadsperblock]
+        _Gridding.__call__ = _apply
 
     @staticmethod
     def _get_callback():
@@ -309,15 +308,15 @@ class _gather(_common._gather):
         cuda.jit(_common._gather._data_lowrank, device=True, inline=True))
 
 
+@cuda.jit(device=True, inline=True)  # pragma: no cover
+def _update(output, index, value):
+    cuda.atomic.add(
+        output.real, index, value.real)
+    cuda.atomic.add(
+        output.imag, index, value.imag)
+        
+      
 class _spread:
-
-    @staticmethod
-    @cuda.jit(device=True, inline=True)  # pragma: no cover
-    def _update(output, index, value):
-        cuda.atomic.add(
-            output.real, index, value.real)
-        cuda.atomic.add(
-            output.imag, index, value.imag)
 
     @staticmethod
     @cuda.jit(device=True, inline=True)  # pragma: no cover
@@ -330,8 +329,7 @@ class _spread:
         idx_out = (frame, batch, index_out)
 
         # update data point
-        data_out = _spread._update(
-            data_out, idx_out, kernel_value * data_in[idx_in])
+        _update(data_out, idx_out, kernel_value * data_in[idx_in])
 
     @staticmethod
     @cuda.jit(device=True, inline=True)  # pragma: no cover
@@ -352,5 +350,4 @@ class _spread:
             weight = kernel_value * basis[coeff, frame]
 
             # update data point
-            data_out = _spread._update(
-                data_out, idx_out, weight * data_in[idx_in])
+            _update(data_out, idx_out, weight * data_in[idx_in])

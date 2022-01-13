@@ -22,7 +22,7 @@ def _dim_list():
 def _device_list():
     devices = ['cpu']
 
-    if torch.cuda.is_available() is True:
+    if torch.cuda.is_available():
         devices.append('cuda')
 
     return devices

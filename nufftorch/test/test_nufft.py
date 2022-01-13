@@ -6,10 +6,12 @@
 # pylint: disable=unused-argument
 
 import pytest
+import warnings
 
 
 import torch
-
+from numba import NumbaPerformanceWarning
+warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
 
 from nufftorch import functional
 
@@ -25,7 +27,7 @@ def test_nufft(ndim, device, img, kdata, wave, utils):
 
     # k-space coordinates
     coord = wave.coordinates
-    dcf = wave.density_comp_factor
+    dcf = wave.density_comp_factor.to(kdata.device)
     shape = wave.acquisition_matrix
       
     # computation
@@ -48,7 +50,7 @@ def test_nufft_lowrank(ndim, device, img, kdata, wave, basis, utils):
 
     # k-space coordinates
     coord = wave.coordinates
-    dcf = wave.density_comp_factor
+    dcf = wave.density_comp_factor.to(kdata.device)
     shape = wave.acquisition_matrix
       
     # computation
