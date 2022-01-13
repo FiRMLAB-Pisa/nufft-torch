@@ -96,7 +96,7 @@ class _DeGridding:
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
 
@@ -138,7 +138,7 @@ class _DeGridding:
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis_adjoint.shape[-1]
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
 
@@ -184,7 +184,7 @@ class _Gridding:
                 return callback(cart_data, noncart_data,
                                 kernel_sparse_coefficients,
                                 kernel_neighbourhood)
-    
+
         else:
             callback = _Gridding._get_lowrank_callback()
 
@@ -193,7 +193,7 @@ class _Gridding:
                                 kernel_sparse_coefficients,
                                 kernel_neighbourhood,
                                 basis)
-            
+
         # assign
         _Gridding.__call__ = _apply[blockspergrid, threadsperblock]
 
@@ -216,7 +216,7 @@ class _Gridding:
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
 
@@ -258,7 +258,7 @@ class _Gridding:
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis.shape[0]
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
 
@@ -297,7 +297,7 @@ class _kernel(_common._kernel):
 
     # precomputed Kernel evaluation
     _evaluate = staticmethod(
-        cuda.jit(_common._kernel._evaluate, device=True, inline=True))
+        cuda.jit(_common._kernel._make_evaluate(_prod, _ravel_index), device=True, inline=True))
 
 
 class _gather(_common._gather):
@@ -321,8 +321,8 @@ class _spread:
 
     @staticmethod
     @cuda.jit(device=True, inline=True)  # pragma: no cover
-    def _data(data_out, data_in, 
-              frame, batch, index_in, 
+    def _data(data_out, data_in,
+              frame, batch, index_in,
               index_out, kernel_value):
 
         # get input and output locations
@@ -335,9 +335,9 @@ class _spread:
 
     @staticmethod
     @cuda.jit(device=True, inline=True)  # pragma: no cover
-    def _data_lowrank(data_out, data_in, 
+    def _data_lowrank(data_out, data_in,
                       frame, batch, index_in,
-                      index_out, kernel_value, 
+                      index_out, kernel_value,
                       basis, ncoeff):
 
         # get input locations

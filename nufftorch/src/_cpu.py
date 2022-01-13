@@ -69,7 +69,7 @@ class _DeGridding:
 
         # get kernel neighbourhood
         kernel_neighbourhood = np.array(_iterator._get_neighbourhood(*kernel_width))
-        
+
         # select correct sub-routine
         if basis_adjoint is None:
             callback = _DeGridding._get_callback()
@@ -110,16 +110,16 @@ class _DeGridding:
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
-            
+
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
 
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
-                
+
                 # gather data within kernel radius
                 for n in kernel_neighbourhood:
                     value, source = kernel(frame, target, n, kvalue, kidx, kwidth, gshape)
@@ -150,10 +150,10 @@ class _DeGridding:
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis_adjoint.shape[-1]
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
-            
+
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
 
@@ -192,7 +192,7 @@ class _Gridding:
                 return callback(cart_data, noncart_data,
                                 kernel_sparse_coefficients,
                                 kernel_neighbourhood)
-                      
+
         else:
             callback = _Gridding._get_lowrank_callback()
 
@@ -224,7 +224,7 @@ class _Gridding:
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
 
@@ -246,7 +246,7 @@ class _Gridding:
 
         return _callback
 
-    
+
     @staticmethod
     def _get_lowrank_callback():
 
@@ -268,7 +268,7 @@ class _Gridding:
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis.shape[0]
-            
+
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
             kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
 
@@ -293,7 +293,7 @@ class _Gridding:
 
         return _callback
 
-    
+
 class _iterator(_common._iterator):
 
     _get_noncart_points_parallelize_over_all = staticmethod(nb.njit(
@@ -353,7 +353,7 @@ class _gather(_common._gather):
     _data = staticmethod(
         nb.njit(_common._gather._data, fastmath=True, cache=True))
 
-    
+
     _data_lowrank = staticmethod(
         nb.njit(_common._gather._data_lowrank, fastmath=True, cache=True))
 
@@ -362,10 +362,10 @@ class _spread:
 
     @staticmethod
     @nb.njit(fastmath=True, cache=True)
-    def _data(data_out, data_in, 
-              frame, batch, index_in, 
+    def _data(data_out, data_in,
+              frame, batch, index_in,
               index_out, kernel_value):
-        
+
         # get input and output locations
         idx_in = (frame, batch, index_in)
         idx_out = (frame, batch, index_out)
@@ -375,8 +375,8 @@ class _spread:
 
     @staticmethod
     @nb.njit(fastmath=True, cache=True)
-    def _data_lowrank(data_out, data_in, 
-                      frame, batch, index_in, 
+    def _data_lowrank(data_out, data_in,
+                      frame, batch, index_in,
                       coeff, index_out, kernel_value,
                       basis):
 
