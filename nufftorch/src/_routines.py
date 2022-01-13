@@ -45,7 +45,7 @@ def prepare_nufft(coord: Tensor,
 
 def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     """Non-uniform Fast Fourier Transform."""
-    # unpack interpolator
+    # Unpack interpolator
     ndim = interpolator['ndim']
     oversamp = interpolator['oversamp']
     width = interpolator['width']
@@ -58,8 +58,7 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     image = image.clone()
 
     # Offload to computational device
-    dispatcher = DeviceDispatch(
-        computation_device=device, data_device=image.device)
+    dispatcher = DeviceDispatch(computation_device=device, data_device=image.device)
     image = dispatcher.dispatch(image)
 
     # Apodize
@@ -82,7 +81,7 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
 
 def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     """Adjoint Non-uniform Fast Fourier Transform."""
-    # unpack interpolator
+    # Unpack interpolator
     ndim = interpolator['ndim']
     oversamp = interpolator['oversamp']
     shape = interpolator['shape']
@@ -93,8 +92,7 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     device = device_dict['device']
 
     # Offload to computational device
-    dispatcher = DeviceDispatch(
-        computation_device=device, data_device=kdata.device)
+    dispatcher = DeviceDispatch(computation_device=device, data_device=kdata.device)
     kdata = dispatcher.dispatch(kdata)
 
     # Gridding
@@ -117,9 +115,9 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
 
 def prepare_noncartesian_toeplitz(coord: Tensor,
                                   shape: Union[int, List[int], Tuple[int]],
-                                  prep_oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-                                  comp_oversamp: Union[float, List[float], Tuple[float]] = 1.0,
-                                  width: Union[int, List[int], Tuple[int]] = 3,
+                                  prep_oversamp: Union[float, List[float], Tuple[float]] = 2,
+                                  comp_oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+                                  width: Union[int, List[int], Tuple[int]] = 5,
                                   basis: Union[Tensor, None] = None,
                                   device: Union[str, torch.device] = 'cpu',
                                   threadsperblock: int = 512,
@@ -140,7 +138,7 @@ def toeplitz_convolution(image: Tensor, toeplitz_dict: Dict) -> Tensor:
         data_out (tensor): Output image.
 
     """
-    # unpack input
+    # Unpack input
     mtf = toeplitz_dict['mtf']
     islowrank = toeplitz_dict['islowrank']
     device_dict = toeplitz_dict['device_dict']
@@ -149,44 +147,39 @@ def toeplitz_convolution(image: Tensor, toeplitz_dict: Dict) -> Tensor:
     oversamp = toeplitz_dict['oversamp']
 
     # Offload to computational device
-    dispatcher = DeviceDispatch(
-        computation_device=device, data_device=image.device)
+    dispatcher = DeviceDispatch(computation_device=device, data_device=image.device)
     image = dispatcher.dispatch(image)
-
-    # reshape for computation
+    
+    # Reshape for computation
     ishape = list(image.shape)
     image = image.reshape(ishape[0], np.prod(ishape[1:-ndim]), *ishape[-ndim:])
 
     # Zero-pad
-    image = ZeroPad(oversamp, image.shape[-ndim:])(image)
-    os_shape = image.shape
+    image = ZeroPad(oversamp, ishape[-ndim:])(image)
 
     # FFT
-    kdata_in = FFT()(image, axes=range(-ndim, 0), norm='ortho')
-
-    # Reshape input
-    if islowrank is True:
-        kdata_in = kdata_in.reshape(
-            *kdata_in.shape[:2], np.prod(kdata_in.shape[-ndim:]))
-
-    # Preallocate output
-    kdata_out = torch.zeros(
-        kdata_in.shape, dtype=kdata_in.dtype, device=kdata_in.device)
-
+    kdata_in = FFT(image)(image, axes=range(-ndim, 0), norm=None, center=False)
+    
     # Perform convolution
-    Toeplitz(kdata_in.size, device_dict)(kdata_out, kdata_in, mtf)
-
-    # Reshape output
-    if islowrank is True:
+    if islowrank:
+        os_shape = kdata_in.shape
+        kdata_in = kdata_in.reshape(*kdata_in.shape[:2], int(np.prod(kdata_in.shape[-ndim:])))        
+        kdata_out = torch.zeros(kdata_in.shape, dtype=kdata_in.dtype, device=kdata_in.device)
+        Toeplitz(kdata_in.numel(), device_dict)(kdata_out, kdata_in, mtf)
         kdata_out = kdata_out.reshape(os_shape)
+    else:
+        kdata_out = mtf * kdata_in
 
     # IFFT
-    image = IFFT()(kdata_out, axes=range(-ndim, 0), norm='ortho')
+    image = IFFT(kdata_out)(kdata_out, axes=range(-ndim, 0), norm=None, center=False)
 
     # Crop
-    image = Crop(oversamp, image.shape[:-ndim])(image)
+    image = Crop(ishape[-ndim:])(image)
+    
+    # Reshape back to original shape
+    image = image.reshape(ishape)
 
     # Bring back to original device
     image = dispatcher.gather(image)
-
+    
     return image

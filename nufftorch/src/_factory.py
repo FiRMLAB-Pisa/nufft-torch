@@ -204,26 +204,8 @@ class AbstractToeplitzFactory(AbstractFactory):
 
         return basis, basis_adjoint
 
-    def _preallocate_unitary_kspace_data(self, basis_adjoint, device):
-
-        if self.islowrank:
-            # initialize temporary arrays
-            ones = torch.ones((self.nframes, self.ncoeff, self.npts),
-                              dtype=torch.complex64, device=device)
-            ones = ones * basis_adjoint[:, :, None]
-
-        else:
-            # initialize temporary arrays
-            ones = torch.ones((self.nframes, self.npts),
-                              dtype=torch.complex64, device=device)
-
-        return ones
 
     def _post_process_mtf(self, mtf):
-
-        # keep only real part if basis is real
-        if self.isreal:
-            mtf = mtf.real
 
         # fftshift kernel to accelerate computation
         mtf = torch.fft.ifftshift(mtf, dim=list(range(-self.ndim, 0)))
@@ -233,21 +215,22 @@ class AbstractToeplitzFactory(AbstractFactory):
         else:
             mtf = mtf[:, None, ...]
 
-        # normalize
-        # mtf /= torch.quantile(mtf, 0.95)
-
         # remove NaN
-        mtf = torch.nan_to_num(mtf)
+        if self.isreal:
+            mtf = mtf.real
+            mtf = torch.nan_to_num(mtf)         
+        else:
+            mtf = torch.nan_to_num(mtf.real) + 1j * torch.nan_to_num(mtf.imag)
 
         # transform to numba
-        mtf = BackendBridge.pytorch2numba(mtf)
+        if self.islowrank:
+            mtf = BackendBridge.pytorch2numba(mtf)
 
         return mtf
 
 
 class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
     """Functions to prepare Toeplitz kernel for Non-Cartesian sampling."""
-
     def __call__(self, coord, shape, prep_osf, comp_osf, width,
                  basis, device, threadsperblock, dcf):
         """Actual pre-computation routine."""
@@ -263,9 +246,6 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         # get kernel shape parameter
         beta = Utils._beatty_parameter(width, prep_osf)
 
-        # get grid shape for preparation
-        grid_shape = Utils._get_oversampled_shape(shape, prep_osf)
-
         # adjust coordinates
         coord = Utils._scale_coord(coord, shape, prep_osf)
 
@@ -274,91 +254,74 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
 
         # actual kernel precomputation
         mtf = self._prepare_kernel(
-            coord, grid_shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf)
-
-        # get grid shape for computation
-        grid_shape = Utils._get_oversampled_shape(shape, comp_osf)
-
+            coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf, threadsperblock)
+        
         return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
-                'ndim': ndim, 'grid_shape': grid_shape}
+                'ndim': ndim, 'oversamp': comp_osf}
 
-    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf):
+    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf, threadsperblock):
         """Core kernel computation sub-routine."""
         # parse size
         self._parse_coordinate_size(coord)
 
-        # reformat coordinates
-        coord = self._reformat_coordinates(coord)
-
         # calculate interpolator
-        mtf = self._prepare_coefficient_matrix(
-            coord, shape, prep_osf, width, basis, device_dict, dcf)
+        mtf = self._prepare_coefficient_matrix(coord, shape, prep_osf, width, basis, device_dict, dcf, threadsperblock)
 
         # resample mtf
-        mtf = self._resample_mtf(
-            mtf, prep_osf, comp_osf, width, beta, device_dict['device'])
+        mtf = self._resample_mtf(mtf, shape, prep_osf, comp_osf, width, beta, device_dict['device'])
 
         # post process mtf
-        mtf = self._post_process(mtf)
+        mtf = self._post_process_mtf(mtf)
 
         return mtf
 
-    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, basis, device_dict, dcf):
+    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, basis, device_dict, dcf, threadsperblock):
         # process basis
-        basis, basis_adjoint = self._process_basis(
-            basis, device_dict['device'])
+        basis, basis_adjoint = self._process_basis(basis, device_dict['device'])
 
-        # prepare dcf
+        # prepare dcf for MTF/PSF estimation
         dcf = self._prepare_dcf(dcf, device_dict['device'])
 
-        # prepare unitary data for MTF/PSF estimation
-        ones = self._preallocate_unitary_kspace_data(
-            basis_adjoint, device_dict['device'])
-
         # calculate modulation transfer function
-        mtf = self._gridding(ones, coord, shape, width,
-                             oversamp, basis, device_dict)
-
+        mtf = self._gridding(dcf, coord, shape, width, oversamp, basis, device_dict, threadsperblock)
+        
         return mtf
 
     def _prepare_dcf(self, dcf, device):
-
         # if dcf are not provided, assume uniform sampling density
         if dcf is None:
-            dcf = torch.ones((self.nframes, self.npts),
-                             torch.float32, device=device)
+            dcf = torch.ones((self.nframes, 1, self.npts), torch.complex64, device=device)
         else:
-            dcf = dcf.clone()
-            dcf = dcf.to(device)
-
-        if dcf.ndim > 1 and not self.islowrank:
-            dcf = dcf[:, None, :]
+            dcf = dcf.clone().squeeze()
+            dcf = dcf.to(torch.complex64).to(device)
+            
+            if len(dcf.shape) == 2:
+                dcf = dcf[:, None, :]
 
         return dcf
 
-    def _gridding(self, ones, coord, shape, width, oversamp, basis, device):
+    def _gridding(self, dcf, coord, shape, width, oversamp, basis, device_dict, threadsperblock):
         # prepare NUFFT object
-        nufft_dict = NUFFTFactory()(coord, shape, width, oversamp,
-                                    basis, device)
+        nufft_dict = NUFFTFactory()(coord, shape, width, oversamp, basis, device_dict['device'], threadsperblock)
 
         # compute mtf
-        return Grid(device)(ones, nufft_dict['kernel_dict'])
+        return Grid(device_dict)(dcf, nufft_dict['kernel_dict'])
 
-    def _resample_mtf(self, mtf, prep_osf, comp_osf, width, beta, device):
+    def _resample_mtf(self, mtf, shape, prep_osf, comp_osf, width, beta, device):
 
         # IFFT
-        psf = IFFT()(mtf, axes=range(-self.ndim, 0), norm='ortho')
-
+        psf = IFFT(mtf)(mtf, axes=range(-self.ndim, 0), norm='ortho')
+        
         # Crop
-        psf = Crop(prep_osf, psf.shape[:-self.ndim])(psf)
+        psf = Crop(shape[-self.ndim:])(psf)
 
         # Apodize
-        Apodize(self.ndim, prep_osf, width, beta, device)(psf)
+        # Apodize(shape[-self.ndim:], prep_osf, width, beta, device)(psf)
 
         # Zero-pad
-        psf = ZeroPad(comp_osf, psf.shape[-self.ndim:])(psf)
+        psf = ZeroPad(comp_osf, shape[-self.ndim:])(psf)
 
         # FFT
-        mtf = FFT()(psf, axes=range(-self.ndim, 0), norm='ortho')
+        mtf = FFT(psf)(psf, axes=range(-self.ndim, 0), norm='ortho')
 
         return mtf

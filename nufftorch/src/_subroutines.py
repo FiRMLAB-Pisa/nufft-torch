@@ -127,9 +127,9 @@ class DataReshape:
         """
         self.ndim = coord_shape[-1]
         self.batch_shape = coord_shape[1:-1]
-        self.batch_size = np.prod(self.batch_shape)
+        self.batch_size = int(np.prod(self.batch_shape))
         self.grid_shape = grid_shape
-        self.grid_size = np.prod(self.grid_shape)
+        self.grid_size = int(np.prod(self.grid_shape))
         self.nframes = coord_shape[0]
 
     def ravel_data(self, input: Tensor) -> Tensor:
@@ -154,8 +154,8 @@ class DataReshape:
 
         # keep original batch shape
         self.batch_axis_shape = input.shape[1:-len(self.batch_shape)]
-        self.nbatches = np.prod(self.batch_axis_shape)
-
+        self.nbatches = int(np.prod(self.batch_axis_shape))
+ 
         return input.reshape(self.nframes, self.nbatches, self.batch_size)
 
     def ravel_grid(self, input: Tensor) -> Tensor:
@@ -180,7 +180,7 @@ class DataReshape:
         
         # keep original batch shape
         self.batch_axis_shape = input.shape[1:-self.ndim]
-        self.nbatches = np.prod(self.batch_axis_shape)
+        self.nbatches = int(np.prod(self.batch_axis_shape))
 
         return input.reshape(input.shape[0], self.nbatches, self.grid_size)
 
@@ -588,9 +588,11 @@ class Toeplitz:
             (data_size + (threadsperblock - 1)) // threadsperblock)
 
         if device == 'cpu' or device == torch.device('cpu'):
-            self._apply = _cpu._dot_product
+            self._apply = _cpu._batched_dot_product
         else:
-            self.module = _cuda._dot_product[blockspergrid, threadsperblock]
+            self._apply = _cuda._batched_dot_product[blockspergrid, threadsperblock]
 
     def __call__(self, kdata_out, kdata_in, mtf):
-        self.apply(kdata_out, kdata_in, mtf)
+        kdata_out, kdata_in = BackendBridge.pytorch2numba(kdata_out, kdata_in)
+        self._apply(kdata_out, kdata_in, mtf)
+        kdata_out, kdata_in = BackendBridge.numba2pytorch(kdata_out, kdata_in)

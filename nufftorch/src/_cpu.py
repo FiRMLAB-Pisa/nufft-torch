@@ -44,14 +44,12 @@ _dot_product = nb.njit(_common._dot_product, fastmath=True, cache=True)
 @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
 def _batched_dot_product(data_out, data_in, matrix):
 
-    n_coeff, batch_size, _ = data_in.shape
-
+    n_coeff, batch_size, _, _ = data_in.shape
+        
     for i in nb.prange(n_coeff * batch_size):
         coeff = i // batch_size
         batch = i % batch_size
-
-        _dot_product(data_out[coeff][batch],
-                     matrix[coeff], data_in[coeff][batch])
+        _dot_product(data_out[coeff][batch], data_in[coeff][batch], matrix[coeff])
 
     return data_out
 

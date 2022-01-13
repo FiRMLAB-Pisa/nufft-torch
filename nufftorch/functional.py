@@ -44,6 +44,7 @@ def nufft(image: Tensor,
           device: Union[str, torch.device] = 'cpu',
           threadsperblock: int = 512) -> Tensor:
     """Non-uniform Fast Fourier Transform.
+    
     Args:
         image (tensor): Input data in image space of shape [n, ..., nz, ny, nx],
                         where n can be number of frames or low-rank subspace
@@ -91,6 +92,7 @@ def nufft_adjoint(kdata: Tensor,
                   device: Union[str, torch.device] = 'cpu',
                   threadsperblock: int = 512) -> Tensor:
     """Adjoint Non-uniform Fast Fourier Transform.
+    
     Args:
         kdata (tensor): Input data in  Fourier space of shape [nframes, ..., coord_shape],
                         where  ... is a set f batches dimensions
