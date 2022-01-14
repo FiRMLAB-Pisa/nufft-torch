@@ -246,8 +246,7 @@ class Apodize:
             idx = torch.arange(i, dtype=torch.float32, device=device)
 
             # Calculate apodization
-            apod = (beta[axis]**2 - (np.pi * width[axis]
-                    * (idx - i // 2) / os_i)**2)**0.5
+            apod = (beta[axis]**2 - (np.pi * width[axis] * (idx - i // 2) / os_i)**2)**0.5
             apod /= torch.sinh(apod)
             self.apod.append(apod.reshape([i] + [1] * (-axis - 1)))
 
@@ -293,8 +292,6 @@ class ZeroPad:
 
 class Crop:
     """Image-domain cropping operator to select targeted FOV."""
-    cropsize: Tuple[int]
-
     def __init__(self, shape: Union[List[int], Tuple[int]]):
         self.oshape = shape
 
@@ -313,17 +310,24 @@ class Crop:
         # get number of dimensions
         ndim = len(oshape)
         
-        # get crop size
-        cropsize = [(oshape[axis] - input.shape[axis]) // 2 for axis in range(-ndim, 0)]
-        cropsize.reverse()
-
-        # get amount of crop over each direction
-        crop = np.repeat(cropsize, 2)
-        crop = crop[::-1]  # torch take from last to first
+        # get center
+        center = np.array(input.shape[-ndim:]) // 2
         
-        return torch.nn.functional.pad(input, tuple(crop))
+        # calculate start
+        start = center - oshape // 2
+        end = start + oshape
+        
+        # crop
+        if ndim == 2:
+            output = input[..., start[0]:end[0], start[1]:end[1]]                         
+        elif ndim == 3:
+            output = input[..., start[0]:end[0], start[1]:end[1], start[2]:end[2]]
+        else:
+            raise NotImplementedError('Only 2D or 3D images supported so far')
+        
+        return output
 
-
+    
 class BaseFFT:
     """Cartesian (Inverse) Fourier Transform."""
     def __init__(self, input):
@@ -584,8 +588,7 @@ class Toeplitz:
         threadsperblock = device_dict['threadsperblock']
 
         # calculate blocks per grid
-        blockspergrid = int(
-            (data_size + (threadsperblock - 1)) // threadsperblock)
+        blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
 
         if device == 'cpu' or device == torch.device('cpu'):
             self._apply = _cpu._batched_dot_product

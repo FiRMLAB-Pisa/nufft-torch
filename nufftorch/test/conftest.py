@@ -12,7 +12,7 @@ import torch
 
 
 def _img_size_list():
-    return [9]
+    return [8]
 
 
 def _dim_list():
@@ -22,8 +22,8 @@ def _dim_list():
 def _device_list():
     devices = ['cpu']
 
-    if torch.cuda.is_available():
-        devices.append('cuda')
+    # if torch.cuda.is_available():
+    #     devices.append('cuda')
 
     return devices
 
@@ -64,7 +64,6 @@ class _Utils:
     @staticmethod
     def normalize(data_in, ndim):
         """Normalize Input between 0 and 1."""
-        print(data_in.shape)
         center = int(data_in.shape[-1] // 2)
         
         if ndim == 2:

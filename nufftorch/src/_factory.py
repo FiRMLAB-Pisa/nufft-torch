@@ -221,6 +221,9 @@ class AbstractToeplitzFactory(AbstractFactory):
             mtf = torch.nan_to_num(mtf)         
         else:
             mtf = torch.nan_to_num(mtf.real) + 1j * torch.nan_to_num(mtf.imag)
+            
+        # normalize
+        mtf = mtf / torch.quantile(mtf.flatten().abs(), 0.95)
 
         # transform to numba
         if self.islowrank:
@@ -253,8 +256,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         device_dict = {'device': device, 'threadsperblock': threadsperblock}
 
         # actual kernel precomputation
-        mtf = self._prepare_kernel(
-            coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf, threadsperblock)
+        mtf = self._prepare_kernel(coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf, threadsperblock)
         
         return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
                 'ndim': ndim, 'oversamp': comp_osf}
@@ -316,7 +318,7 @@ class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
         psf = Crop(shape[-self.ndim:])(psf)
 
         # Apodize
-        # Apodize(shape[-self.ndim:], prep_osf, width, beta, device)(psf)
+        Apodize(shape[-self.ndim:], prep_osf, width, beta, device)(psf)
 
         # Zero-pad
         psf = ZeroPad(comp_osf, shape[-self.ndim:])(psf)

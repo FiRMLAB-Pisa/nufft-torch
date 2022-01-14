@@ -62,15 +62,20 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     image = dispatcher.dispatch(image)
 
     # Apodize
+    print(image.shape)
     Apodize(image.shape[-ndim:], oversamp, width, beta, device)(image)
 
     # Zero-pad
+    print(image.shape)
+    print(oversamp)
     image = ZeroPad(oversamp, image.shape[-ndim:])(image)
 
     # FFT
+    print(image.shape)
     kdata = FFT(image)(image, axes=range(-ndim, 0), norm='ortho')
 
     # Interpolate
+    print(kdata.shape)
     kdata = DeGrid(device_dict)(kdata, kernel_dict)
 
     # Bring back to original device

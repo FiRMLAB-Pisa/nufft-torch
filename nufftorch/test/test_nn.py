@@ -86,9 +86,10 @@ def test_nufft_selfadjoint(ndim, device, img, wave, utils):
     img_ground_truth = FH(dcf * F(img.clone()))
     img_toeplitz = FHF(img.clone())
     
-    print(img_ground_truth[0,0,0,0])
-    print(img_toeplitz[0,0,0,0])
-
+    # normalize
+    utils.normalize(img_ground_truth, ndim)
+    utils.normalize(img_toeplitz, ndim)
+    
     # check
     res = torch.norm(img_ground_truth - img_toeplitz) / torch.norm(img_ground_truth)
 
