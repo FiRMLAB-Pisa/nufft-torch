@@ -187,6 +187,9 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         # kernel resampling
         mtf = self._resample_mtf(mtf, shape, prep_osf, comp_osf, width, device)
         
+        # post process
+        mtf = self._post_process_mtf(mtf)
+        
         # device_dict
         device_dict = {'device': device, 'threadsperblock': threadsperblock}
 

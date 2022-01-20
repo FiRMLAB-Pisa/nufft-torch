@@ -33,8 +33,7 @@ def _batched_dot_product(data_out, data_in, matrix):
         coeff = i // batch_size
         batch = i % batch_size
 
-        _dot_product(data_out[coeff][batch],
-                     matrix[coeff], data_in[coeff][batch])
+        _dot_product(data_out[coeff][batch], matrix[coeff], data_in[coeff][batch])
 
     return data_out
 

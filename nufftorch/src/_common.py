@@ -105,7 +105,7 @@ class _gather:
 
 
 def _dot_product(out, in_a, in_b):
-    row, col = out.shape
+    row, col = in_a.shape
 
     for j in range(col):
         for i in range(row):
