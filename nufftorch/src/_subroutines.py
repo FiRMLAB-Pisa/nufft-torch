@@ -46,6 +46,11 @@ class Utils:
 
     @staticmethod
     def _beatty_parameter(width, oversamp):
+        
+        # fix for width = 1
+        width = width.copy()
+        width[width < 2] = 2
+        
         return np.pi * (((width / oversamp) * (oversamp - 0.5))**2 - 0.8)**0.5
 
     @staticmethod
@@ -60,6 +65,21 @@ class Utils:
             coord[..., i] += shift
 
         return coord
+    
+    @staticmethod
+    def _get_kernel_scaling(beta, width):
+        
+        # init kernel centered on k-space node
+        value = []
+        
+        # fill the three axes
+        for ax in range(len(width)):
+            start = np.ceil(-width[ax] / 2)
+            value.append(np.array([_cpu._kernel._function((start + el) / (width[ax] / 2), beta[ax]) for el in range(width[ax])]))
+                        
+        value = np.stack(np.meshgrid(*value), axis=0).prod(axis=0)
+        
+        return value.sum()
 
 
 class DeviceDispatch:
@@ -239,6 +259,10 @@ class Apodize:
         # get number of spatial dimensions
         self.ndim = len(grid_shape)
         self.apod = []
+        
+        # fix for width = 1
+        width = width.copy()
+        width[width < 2] = 2
 
         for axis in range(-self.ndim, 0):
             i = grid_shape[axis]
@@ -248,6 +272,13 @@ class Apodize:
             # Calculate apodization
             apod = (beta[axis]**2 - (np.pi * width[axis] * (idx - i // 2) / os_i)**2)**0.5
             apod /= torch.sinh(apod)
+            
+            # normalize by DC
+            apod = apod / apod[int(i // 2)]
+            
+            # avoid NaN
+            apod = torch.nan_to_num(apod, nan=1.0)
+                        
             self.apod.append(apod.reshape([i] + [1] * (-axis - 1)))
 
     def __call__(self, input: Tensor):

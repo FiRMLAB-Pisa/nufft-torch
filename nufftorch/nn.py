@@ -155,7 +155,7 @@ class NUFFTSelfadjoint(torch.nn.Module):
                  coord: Tensor,
                  shape: Union[int, List[int], Tuple[int]],
                  prep_oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-                 comp_oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+                 comp_oversamp: Union[float, List[float], Tuple[float]] = 1.0,
                  width: Union[int, List[int], Tuple[int]] = 3,
                  basis: Union[Tensor, None] = None,
                  device: Union[str, torch.device] = 'cpu',

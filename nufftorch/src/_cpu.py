@@ -340,8 +340,7 @@ class _kernel(_common._kernel):
         return value
 
     # precomputed Kernel evaluation
-    _evaluate = staticmethod(
-        nb.njit(_common._kernel._make_evaluate(_prod, _ravel_index), fastmath=True, cache=True))
+    _evaluate = staticmethod(nb.njit(_common._kernel._make_evaluate(_prod, _ravel_index), fastmath=True, cache=True))
 
 
 _kernel_function = _kernel._function

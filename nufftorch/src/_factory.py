@@ -66,8 +66,10 @@ class NUFFTFactory(AbstractFactory):
         coord = Utils._scale_coord(coord, shape, oversamp)
 
         # compute interpolator
-        kernel_dict = self._prepare_kernel(
-            coord, grid_shape, width, beta, basis, device)
+        kernel_dict = self._prepare_kernel(coord, grid_shape, width, beta, basis, device)
+        
+        # get scaling
+        scale = Utils._get_kernel_scaling(beta, width)
 
         # device_dict
         device_dict = {'device': device, 'threadsperblock': threadsperblock}
@@ -79,6 +81,7 @@ class NUFFTFactory(AbstractFactory):
                         'width': width,
                         'beta': beta,
                         'kernel_dict': kernel_dict,
+                        'scale': scale,
                         'device_dict': device_dict}
 
         return interpolator
@@ -93,8 +96,7 @@ class NUFFTFactory(AbstractFactory):
         coord = self._reformat_coordinates(coord)
 
         # calculate interpolator
-        kernel_tuple = self._prepare_sparse_coefficient_matrix(
-            coord, shape, width, beta, device)
+        kernel_tuple = self._prepare_sparse_coefficient_matrix(coord, shape, width, beta, device)
 
         # adjust basis
         if basis is not None:
@@ -123,13 +125,11 @@ class NUFFTFactory(AbstractFactory):
 
         for i in range(self.ndim):
             # kernel value
-            empty_value = torch.zeros(
-                (self.coord_length, width[i]), dtype=torch.float32)
+            empty_value = torch.zeros((self.coord_length, width[i]), dtype=torch.float32)
             value.append(empty_value)
 
             # kernel index
-            empty_index = torch.zeros(
-                (self.coord_length, width[i]), dtype=torch.int32)
+            empty_index = torch.zeros((self.coord_length, width[i]), dtype=torch.int32)
             index.append(empty_index)
 
         return value, index
@@ -137,10 +137,8 @@ class NUFFTFactory(AbstractFactory):
     def _reformat_sparse_coefficients(self, value, index, width, device):
         for i in range(self.ndim):
             # reshape
-            value[i] = value[i].reshape(
-                [self.nframes, self.npts, width[i]]).to(device)
-            index[i] = index[i].reshape(
-                [self.nframes, self.npts, width[i]]).to(device)
+            value[i] = value[i].reshape([self.nframes, self.npts, width[i]]).to(device)
+            index[i] = index[i].reshape([self.nframes, self.npts, width[i]]).to(device)
             
         # stack (support isotropic kernel only)
         value = torch.stack(value, dim=0)
@@ -175,9 +173,108 @@ class NUFFTFactory(AbstractFactory):
         return kernel_tuple
 
 
-class AbstractToeplitzFactory(AbstractFactory):
-    """Base class for Cartesian and Non-Cartesian Factory classes."""
+class NonCartesianToeplitzFactory(AbstractFactory):
+    """Functions to prepare Toeplitz kernel for Non-Cartesian sampling."""
+    def __call__(self, coord, shape, prep_osf, comp_osf, width,
+                 basis, device, threadsperblock, dcf):
+        """Actual pre-computation routine."""
+        # clone coordinates and dcf to avoid modifications
+        coord = coord.clone()
+        
+        # kernel precomputation
+        mtf = self._initialize_mtf(coord, shape, width, prep_osf, basis, device, threadsperblock, dcf)
+        
+        # kernel resampling
+        mtf = self._resample_mtf(mtf, shape, prep_osf, comp_osf, width, device)
+        
+        # device_dict
+        device_dict = {'device': device, 'threadsperblock': threadsperblock}
 
+
+        return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
+                'ndim': self.ndim, 'oversamp': comp_osf}
+
+    def _initialize_mtf(self, coord, shape, width, prep_osf, basis, device, threadsperblock, dcf):
+        """Core kernel computation sub-routine."""
+        # parse size
+        self._parse_coordinate_size(coord)
+        
+        # process basis
+        basis, basis_adjoint = self._process_basis(basis, device)
+
+        # prepare dcf for MTF/PSF estimation
+        dcf = self._prepare_dcf(dcf, device)
+                
+        # prepare Interpolator object
+        interpolator = NUFFTFactory()(coord, shape, width, prep_osf, basis, device, threadsperblock)
+        
+        return Grid(interpolator['device_dict'])(dcf, interpolator['kernel_dict'])
+
+    def _resample_mtf(self, mtf, shape, prep_osf, comp_osf, width, device):
+        
+        # get arrays
+        width, shape = Utils._scalars2arrays(self.ndim, width, shape)
+
+        # get kernel shape parameter
+        beta = Utils._beatty_parameter(width, prep_osf)
+
+        # IFFT
+        psf = IFFT(mtf)(mtf, axes=range(-self.ndim, 0), norm='ortho')
+        
+        # Crop
+        psf = Crop(shape[-self.ndim:])(psf)
+
+        # Apodize
+        Apodize(shape[-self.ndim:], prep_osf, width, beta, device)(psf)
+
+        # Zero-pad
+        psf = ZeroPad(comp_osf, shape[-self.ndim:])(psf)
+
+        # FFT
+        mtf = FFT(psf)(psf, axes=range(-self.ndim, 0), norm='ortho')
+
+        return mtf
+    
+    def _post_process_mtf(self, mtf):
+
+        # fftshift kernel to accelerate computation
+        mtf = torch.fft.fftshift(mtf, dim=list(range(-self.ndim, 0)))
+
+        if self.islowrank:
+            mtf = mtf.reshape(*mtf.shape[:2], np.prod(mtf.shape[2:]))
+        else:
+            mtf = mtf[:, None, ...]
+
+        # remove NaN
+        if self.isreal:
+            mtf = mtf.real
+            mtf = torch.nan_to_num(mtf)         
+        else:
+            mtf = torch.nan_to_num(mtf.real) + 1j * torch.nan_to_num(mtf.imag)
+            
+        # normalize
+        mtf = mtf / torch.quantile(mtf.flatten().abs(), 0.95)
+
+        # transform to numba
+        if self.islowrank:
+            mtf = BackendBridge.pytorch2numba(mtf)
+
+        return mtf
+    
+    # utils
+    def _prepare_dcf(self, dcf, device):
+        # if dcf are not provided, assume uniform sampling density
+        if dcf is None:
+            dcf = torch.ones((self.nframes, 1, self.npts), torch.complex64, device=device)
+        else:
+            dcf = dcf.clone().squeeze()
+            dcf = dcf.to(torch.complex64).to(device)
+            
+            if len(dcf.shape) == 2:
+                dcf = dcf[:, None, :]
+
+        return dcf
+    
     def _process_basis(self, basis, device):
 
         # inspect basis to determine data type
@@ -203,127 +300,4 @@ class AbstractToeplitzFactory(AbstractFactory):
             basis_adjoint = None
 
         return basis, basis_adjoint
-
-
-    def _post_process_mtf(self, mtf):
-
-        # fftshift kernel to accelerate computation
-        mtf = torch.fft.ifftshift(mtf, dim=list(range(-self.ndim, 0)))
-
-        if self.islowrank:
-            mtf = mtf.reshape(*mtf.shape[:2], np.prod(mtf.shape[2:]))
-        else:
-            mtf = mtf[:, None, ...]
-
-        # remove NaN
-        if self.isreal:
-            mtf = mtf.real
-            mtf = torch.nan_to_num(mtf)         
-        else:
-            mtf = torch.nan_to_num(mtf.real) + 1j * torch.nan_to_num(mtf.imag)
-            
-        # normalize
-        mtf = mtf / torch.quantile(mtf.flatten().abs(), 0.95)
-
-        # transform to numba
-        if self.islowrank:
-            mtf = BackendBridge.pytorch2numba(mtf)
-
-        return mtf
-
-
-class NonCartesianToeplitzFactory(AbstractToeplitzFactory):
-    """Functions to prepare Toeplitz kernel for Non-Cartesian sampling."""
-    def __call__(self, coord, shape, prep_osf, comp_osf, width,
-                 basis, device, threadsperblock, dcf):
-        """Actual pre-computation routine."""
-        # clone coordinates and dcf to avoid modifications
-        coord = coord.clone()
-
-        # get parameters
-        ndim = coord.shape[-1]
-
-        # get arrays
-        width, shape = Utils._scalars2arrays(ndim, width, shape)
-
-        # get kernel shape parameter
-        beta = Utils._beatty_parameter(width, prep_osf)
-
-        # adjust coordinates
-        coord = Utils._scale_coord(coord, shape, prep_osf)
-
-        # device_dict
-        device_dict = {'device': device, 'threadsperblock': threadsperblock}
-
-        # actual kernel precomputation
-        mtf = self._prepare_kernel(coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf, threadsperblock)
-        
-        return {'mtf': mtf, 'islowrank': self.islowrank, 'device_dict': device_dict,
-                'ndim': ndim, 'oversamp': comp_osf}
-
-    def _prepare_kernel(self, coord, shape, prep_osf, comp_osf, width, beta, basis, device_dict, dcf, threadsperblock):
-        """Core kernel computation sub-routine."""
-        # parse size
-        self._parse_coordinate_size(coord)
-
-        # calculate interpolator
-        mtf = self._prepare_coefficient_matrix(coord, shape, prep_osf, width, basis, device_dict, dcf, threadsperblock)
-
-        # resample mtf
-        mtf = self._resample_mtf(mtf, shape, prep_osf, comp_osf, width, beta, device_dict['device'])
-
-        # post process mtf
-        mtf = self._post_process_mtf(mtf)
-
-        return mtf
-
-    def _prepare_coefficient_matrix(self, coord, shape, oversamp, width, basis, device_dict, dcf, threadsperblock):
-        # process basis
-        basis, basis_adjoint = self._process_basis(basis, device_dict['device'])
-
-        # prepare dcf for MTF/PSF estimation
-        dcf = self._prepare_dcf(dcf, device_dict['device'])
-
-        # calculate modulation transfer function
-        mtf = self._gridding(dcf, coord, shape, width, oversamp, basis, device_dict, threadsperblock)
-        
-        return mtf
-
-    def _prepare_dcf(self, dcf, device):
-        # if dcf are not provided, assume uniform sampling density
-        if dcf is None:
-            dcf = torch.ones((self.nframes, 1, self.npts), torch.complex64, device=device)
-        else:
-            dcf = dcf.clone().squeeze()
-            dcf = dcf.to(torch.complex64).to(device)
-            
-            if len(dcf.shape) == 2:
-                dcf = dcf[:, None, :]
-
-        return dcf
-
-    def _gridding(self, dcf, coord, shape, width, oversamp, basis, device_dict, threadsperblock):
-        # prepare NUFFT object
-        nufft_dict = NUFFTFactory()(coord, shape, width, oversamp, basis, device_dict['device'], threadsperblock)
-
-        # compute mtf
-        return Grid(device_dict)(dcf, nufft_dict['kernel_dict'])
-
-    def _resample_mtf(self, mtf, shape, prep_osf, comp_osf, width, beta, device):
-
-        # IFFT
-        psf = IFFT(mtf)(mtf, axes=range(-self.ndim, 0), norm='ortho')
-        
-        # Crop
-        psf = Crop(shape[-self.ndim:])(psf)
-
-        # Apodize
-        Apodize(shape[-self.ndim:], prep_osf, width, beta, device)(psf)
-
-        # Zero-pad
-        psf = ZeroPad(comp_osf, shape[-self.ndim:])(psf)
-
-        # FFT
-        mtf = FFT(psf)(psf, axes=range(-self.ndim, 0), norm='ortho')
-
-        return mtf
+    
