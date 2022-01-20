@@ -266,17 +266,7 @@ class ZeroPad:
 
     def __init__(self, oversamp: float, shape: Union[List[int], Tuple[int]]):
         # get oversampled shape
-        oshape = Utils._get_oversampled_shape(oversamp, shape)
-
-        # get pad size
-        padsize = [(oshape[axis] - shape[axis]) //
-                   2 for axis in range(len(shape))]
-
-        # get amount of pad over each direction
-        pad = np.repeat(padsize, 2)
-        pad = pad[::-1] # torch take from last to first
-
-        self.padsize = tuple(pad)
+        self.oshape = Utils._get_oversampled_shape(oversamp, shape)
 
     def __call__(self, input: Tensor) -> Tensor:
         """Apply zero padding step.
@@ -287,8 +277,34 @@ class ZeroPad:
         Returns:
             tensor: Output zero-padded image.
         """
-        return torch.nn.functional.pad(input, self.padsize, mode="constant", value=0)
+        # unpack
+        oshape = np.array(self.oshape)
+        ishape = np.array(input.shape)
+        
+        # get number of dimensions
+        ndim = len(oshape)
+        
+        
+        # get center
+        center = oshape // 2
+        
+        # calculate start
 
+        start = center - ishape[-ndim:] // 2
+        end = start + ishape[-ndim:]
+        
+        # pad
+        output = torch.zeros([*ishape[:-ndim], *oshape], dtype=input.dtype, device=input.device)
+                
+        if ndim == 2:
+            output[..., start[0]:end[0], start[1]:end[1]] = input                         
+        elif ndim == 3:
+            output[..., start[0]:end[0], start[1]:end[1], start[2]:end[2]] = input
+        else:
+            raise NotImplementedError('Only 2D or 3D images supported so far')
+        
+        return output
+    
 
 class Crop:
     """Image-domain cropping operator to select targeted FOV."""
@@ -305,7 +321,7 @@ class Crop:
             tensor: Output zero-padded image.
         """
         # unpack
-        oshape = self.oshape
+        oshape = np.array(self.oshape)
         
         # get number of dimensions
         ndim = len(oshape)
