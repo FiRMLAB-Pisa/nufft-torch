@@ -208,7 +208,10 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         # prepare Interpolator object
         interpolator = NUFFTFactory()(coord, shape, width, prep_osf, basis, device, threadsperblock)
         
-        return Grid(interpolator['device_dict'])(dcf, interpolator['kernel_dict'])
+        # get scaling
+        scale = (prep_osf**self.ndim) / interpolator['scale']
+        
+        return Grid(interpolator['device_dict'])(dcf, interpolator['kernel_dict'])  * scale
 
     def _resample_mtf(self, mtf, shape, prep_osf, comp_osf, width, device):
         
@@ -219,7 +222,7 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         beta = Utils._beatty_parameter(width, prep_osf)
 
         # IFFT
-        psf = IFFT(mtf)(mtf, axes=range(-self.ndim, 0), norm='ortho')
+        psf = IFFT(mtf)(mtf, axes=range(-self.ndim, 0), norm=None)
         
         # Crop
         psf = Crop(shape[-self.ndim:])(psf)
@@ -231,7 +234,7 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         psf = ZeroPad(comp_osf, shape[-self.ndim:])(psf)
 
         # FFT
-        mtf = FFT(psf)(psf, axes=range(-self.ndim, 0), norm='ortho')
+        mtf = FFT(psf)(psf, axes=range(-self.ndim, 0), norm=None)
 
         return mtf
     
@@ -252,9 +255,6 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         else:
             mtf = torch.nan_to_num(mtf.real) + 1j * torch.nan_to_num(mtf.imag)
             
-        # normalize
-        mtf = mtf / torch.quantile(mtf.flatten().abs(), 0.95)
-
         # transform to numba
         if self.islowrank:
             mtf = BackendBridge.pytorch2numba(mtf)
