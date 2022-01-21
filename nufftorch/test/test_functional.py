@@ -36,7 +36,7 @@ if torch.cuda.is_available():
 @pytest.mark.parametrize("ndim, nframes, nechoes, ncoils, nslices, device",
     list(itertools.product(*[ndim, nframes, nechoes, ncoils, nslices, device])))
 def test_nufft(ndim, nframes, nechoes, ncoils, nslices, device, 
-               npix=8, osf=2.0, width=4, test=True):
+                npix=8, osf=2.0, width=4, test=True):
     
     tol = 1e-2  
 
@@ -50,7 +50,7 @@ def test_nufft(ndim, nframes, nechoes, ncoils, nslices, device,
             
     # computation
     kdata_out = functional.nufft(img_ground_truth.clone(), coord=coord, 
-                                 device=device, oversamp=osf, width=width)
+                                  device=device, oversamp=osf, width=width)
     
     # check
     res = torch.norm(kdata_ground_truth - kdata_out) / torch.norm(kdata_ground_truth)
@@ -80,7 +80,7 @@ def test_nufft_adjoint(ndim, nframes, nechoes, ncoils, nslices, device,
             
     # computation
     img_out = functional.nufft_adjoint(dcf * kdata_ground_truth.clone(), coord=coord, shape=shape, 
-                                       device=device, oversamp=osf, width=width)
+                                        device=device, oversamp=osf, width=width)
     
     # check
     res = torch.norm(img_ground_truth - img_out) / torch.norm(img_ground_truth)
@@ -94,7 +94,7 @@ def test_nufft_adjoint(ndim, nframes, nechoes, ncoils, nslices, device,
 @pytest.mark.parametrize("ndim, nframes, nechoes, ncoils, nslices, dtype, device",
     list(itertools.product(*[ndim, nframes, nechoes, ncoils, nslices, dtype, device])))
 def test_nufft_lowrank(ndim, nframes, nechoes, ncoils, nslices, dtype, device, 
-                       npix=8, osf=2.0, width=4, test=True):
+                        npix=8, osf=2.0, width=4, test=True):
     
     tol = 1e-2  
 
@@ -111,7 +111,7 @@ def test_nufft_lowrank(ndim, nframes, nechoes, ncoils, nslices, dtype, device,
             
     # computation
     kdata_out = functional.nufft(img_ground_truth.clone(), coord=coord, 
-                                 device=device, basis=basis, oversamp=osf, width=width)
+                                  device=device, basis=basis, oversamp=osf, width=width)
     
     # check
     res = torch.norm(kdata_ground_truth - kdata_out) / torch.norm(kdata_ground_truth)
@@ -144,7 +144,7 @@ def test_nufft_adjoint_lowrank(ndim, nframes, nechoes, ncoils, nslices, dtype, d
             
     # computation
     img_out = functional.nufft_adjoint(dcf * kdata_ground_truth.clone(), coord=coord, shape=shape, 
-                                       device=device, oversamp=osf, width=width, basis=basis)
+                                        device=device, oversamp=osf, width=width, basis=basis)
     
     # check
     res = torch.norm(img_ground_truth - img_out) / torch.norm(img_ground_truth)

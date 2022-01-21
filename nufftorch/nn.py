@@ -29,7 +29,7 @@ from typing import List, Tuple, Dict, Union
 import torch
 from torch import Tensor
 
-from nufftorch import autograd
+from nufftorch import _autograd
 from nufftorch.src import _routines
 
 
@@ -55,10 +55,6 @@ class AbstractNUFFT(torch.nn.Module):  # pylint: disable=abstract-method
                 coord, shape, oversamp, width, basis, device)
         else:
             self.interpolator = interpolator
-
-    @property
-    def H(self):  # pylint: disable=invalid-name
-        """Return adjoint linear operator. """
 
 
 class NUFFT(AbstractNUFFT):
@@ -99,12 +95,7 @@ class NUFFT(AbstractNUFFT):
                             (coil, te, ...) and coord_shape must match
                             coord.shape[:-1] used in prepare_nufft.
         """
-        return autograd._nufft.apply(image, self.interpolator)
-
-    @property
-    def H(self):
-        """ Return NUFFTAdjoint object. """
-        return autograd._nufft_adjoint(interpolator=self.interpolator)
+        return _autograd._nufft.apply(image, self.interpolator)
 
 
 class NUFFTAdjoint(AbstractNUFFT):
@@ -140,12 +131,7 @@ class NUFFTAdjoint(AbstractNUFFT):
                             coefficients and ... is a set of batches dimensions
                             (coil, te, ...).
         """
-        return autograd._nufft_adjoint.apply(kdata, self.interpolator)
-
-    @property
-    def H(self):
-        """ Return NUFFT object. """
-        return autograd._nufft(interpolator=self.interpolator)
+        return _autograd._nufft_adjoint.apply(kdata, self.interpolator)
 
 
 class NUFFTSelfadjoint(torch.nn.Module):
@@ -171,11 +157,6 @@ class NUFFTSelfadjoint(torch.nn.Module):
         else:
             self.toeplitz_kernel = toeplitz_kernel
 
-    @property
-    def H(self):  # pylint: disable=invalid-name
-        """Return self-adjoint linear operator. """
-        return self
-
     def forward(self, image):
         """ Perform self-adjoint NUFFT operation.
         
@@ -191,6 +172,6 @@ class NUFFTSelfadjoint(torch.nn.Module):
                             coefficients and ... is a set of batches dimensions
                             (coil, te, ...).
         """
-        return autograd._nufft_selfadjoint.apply(image, self.toeplitz_kernel)
+        return _autograd._nufft_selfadjoint.apply(image, self.toeplitz_kernel)
 
 

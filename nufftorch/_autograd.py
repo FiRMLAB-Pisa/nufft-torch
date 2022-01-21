@@ -17,30 +17,36 @@ class _nufft(torch.autograd.Function):
     """ Autograd.Function to be used inside nn.Module. """
     @staticmethod
     def forward(ctx, image, interpolator):  
+        ctx.interpolator = interpolator
         return _routines.nufft(image, interpolator)
 
     @staticmethod
-    def backward(ctx, grad_kdata, interpolator):
-        return _routines.nufft_adjoint(grad_kdata, interpolator)
+    def backward(ctx, grad_kdata):
+        interpolator = ctx.interpolator
+        return _routines.nufft_adjoint(grad_kdata, interpolator), None
    
     
 class _nufft_adjoint(torch.autograd.Function):
     """ Autograd.Function to be used inside nn.Module. """
     @staticmethod
-    def forward(ctx, image, interpolator):
-        return _routines.nufft_adjoint(image, interpolator)
+    def forward(ctx, kdata, interpolator):
+        ctx.interpolator = interpolator
+        return _routines.nufft_adjoint(kdata, interpolator)
 
     @staticmethod
-    def backward(ctx, grad_kdata, interpolator):
-        return _routines.nufft(grad_kdata, interpolator)
+    def backward(ctx, grad_image):
+        interpolator = ctx.interpolator
+        return _routines.nufft(grad_image, interpolator), None
     
     
 class _nufft_selfadjoint(torch.autograd.Function):
     @staticmethod
     def forward(ctx, image, interpolator):
+        ctx.interpolator = interpolator
         return _routines.toeplitz_convolution(image, interpolator)
 
     @staticmethod
-    def backward(ctx, grad_image, interpolator):
-        return _routines.toeplitz_convolution(grad_image, interpolator)
+    def backward(ctx, grad_image):
+        interpolator = ctx.interpolator
+        return _routines.toeplitz_convolution(grad_image, interpolator), None
 

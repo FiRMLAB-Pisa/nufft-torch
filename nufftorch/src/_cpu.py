@@ -116,8 +116,8 @@ class _DeGridding:
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
                 # gather data within kernel radius
-                for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
+                for point in kernel_neighbourhood:
+                    value, source = kernel(frame, target, point, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value)
@@ -156,8 +156,8 @@ class _DeGridding:
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
                 # gather data within kernel radius
-                for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
+                for point in kernel_neighbourhood:
+                    value, source = kernel(frame, target, point, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
@@ -233,9 +233,8 @@ class _Gridding:
                 for source in range(npts):
 
                     # spread data within kernel radius
-                    for n in kernel_neighbourhood:
-                        value, target = kernel(frame, source, n, kvalue, kidx, kwidth, grid_off)
-                        print(target)
+                    for point in kernel_neighbourhood:
+                        value, target = kernel(frame, source, point, kvalue, kidx, kwidth, grid_off)
 
                         # update
                         spread(cart_data, noncart_data, frame, batch, source, target, value)
@@ -255,7 +254,7 @@ class _Gridding:
         # spread function
         spread = _spread._data_lowrank
 
-        # @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
         def _callback(cart_data, noncart_data,
                       kernel_sparse_coefficients,
                       kernel_neighbourhood,
@@ -281,8 +280,8 @@ class _Gridding:
                     for source in range(npts):
 
                         # spread data within kernel radius
-                        for n in kernel_neighbourhood:
-                            value, target = kernel(frame, source, n, kvalue, kidx, kwidth, grid_off)
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, kwidth, grid_off)
 
                             # update
                             spread(cart_data, noncart_data, frame, batch, source, coeff, target, value, basis)

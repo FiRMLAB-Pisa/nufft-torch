@@ -103,8 +103,8 @@ class _DeGridding:
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
                 # gather data within kernel radius
-                for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
+                for point in kernel_neighbourhood:
+                    value, source = kernel(frame, target, point, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value)
@@ -145,8 +145,8 @@ class _DeGridding:
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
                 # gather data within kernel radius
-                for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
+                for point in kernel_neighbourhood:
+                    value, source = kernel(frame, target, point, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
@@ -223,8 +223,8 @@ class _Gridding:
                 frame, batch, source = _get_source_point(i, batch_size, npts)
 
                 # spread data within kernel radius
-                for n in kernel_neighbourhood:
-                    value, target = kernel(frame, source, n, kvalue, kidx, kwidth, gshape)
+                for point in kernel_neighbourhood:
+                    value, target = kernel(frame, source, point, kvalue, kidx, kwidth, gshape)
 
                     # update
                     spread(cart_data, noncart_data, frame, batch, source, target, value)
@@ -265,8 +265,8 @@ class _Gridding:
                 frame, batch, source = _get_source_point(i, batch_size, npts)
 
                 # spread data within kernel radius
-                for n in kernel_neighbourhood:
-                    value, target = kernel(frame, source, n, kvalue, kidx, kwidth, gshape)
+                for point in kernel_neighbourhood:
+                    value, target = kernel(frame, source, point, kvalue, kidx, kwidth, gshape)
 
                     # update
                     spread(cart_data, noncart_data, frame, batch, source, target, value, basis, ncoeff)
