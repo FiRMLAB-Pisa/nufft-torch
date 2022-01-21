@@ -44,15 +44,12 @@ _dot_product = nb.njit(_common._dot_product, fastmath=True, cache=True)
 @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
 def _batched_dot_product(data_out, data_in, matrix):
 
-    n_coeff, batch_size, _ = data_in.shape
+    n_points, batch_size, _ = data_in.shape
         
-    for i in nb.prange(n_coeff * batch_size):
-        coeff = i // batch_size
+    for i in nb.prange(n_points * batch_size):
+        point = i // batch_size
         batch = i % batch_size
-        _dot_product(data_out[coeff][batch], matrix[coeff], data_in[coeff][batch])
-
-    return data_out
-
+        _dot_product(data_out[point][batch], matrix[point], data_in[point][batch])
 
 
 class _DeGridding:
@@ -110,8 +107,8 @@ class _DeGridding:
             nframes, batch_size, npts = noncart_data.shape
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
-
+            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
+            
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
 
@@ -120,7 +117,7 @@ class _DeGridding:
 
                 # gather data within kernel radius
                 for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, gshape)
+                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value)
@@ -150,8 +147,8 @@ class _DeGridding:
             ncoeff = basis_adjoint.shape[-1]
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
-
+            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
+            
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
 
@@ -160,7 +157,7 @@ class _DeGridding:
 
                 # gather data within kernel radius
                 for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, gshape)
+                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
@@ -224,11 +221,11 @@ class _Gridding:
             nframes, batch_size, npts = noncart_data.shape
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
-
+            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
+            
             # parallelize over frames and batches
             for i in nb.prange(nframes*batch_size):
-
+                
                 # get current frame and k-space index
                 frame, batch = _get_source_point(i, batch_size)
 
@@ -237,7 +234,8 @@ class _Gridding:
 
                     # spread data within kernel radius
                     for n in kernel_neighbourhood:
-                        value, target = kernel(frame, source, n, kvalue, kidx, kwidth, gshape)
+                        value, target = kernel(frame, source, n, kvalue, kidx, kwidth, grid_off)
+                        print(target)
 
                         # update
                         spread(cart_data, noncart_data, frame, batch, source, target, value)
@@ -268,8 +266,8 @@ class _Gridding:
             ncoeff = basis.shape[0]
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
-
+            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
+            
             # parallelize over frames, batches and k-space points
             for i in nb.prange(ncoeff*batch_size):
 
@@ -284,7 +282,7 @@ class _Gridding:
 
                         # spread data within kernel radius
                         for n in kernel_neighbourhood:
-                            value, target = kernel(frame, source, n, kvalue, kidx, kwidth, gshape)
+                            value, target = kernel(frame, source, n, kvalue, kidx, kwidth, grid_off)
 
                             # update
                             spread(cart_data, noncart_data, frame, batch, source, coeff, target, value, basis)
@@ -297,7 +295,7 @@ class _iterator(_common._iterator):
     _get_noncart_points_parallelize_over_all = staticmethod(nb.njit(
         _common._iterator._get_noncart_points_parallelize_over_all,
         fastmath=True, cache=True))
-
+    
     @staticmethod
     @nb.njit(fastmath=True, cache=True)
     def _get_noncart_points_parallelize_over_batch_and_frame(index: int, batch_size: int) -> Tuple[int, int]:
@@ -305,9 +303,6 @@ class _iterator(_common._iterator):
         batch = index % batch_size
 
         return frame, batch
-
-    _check_boundaries = staticmethod(nb.njit(
-        _common._iterator._check_boundaries, fastmath=True, cache=True))
 
 
 _prod = nb.njit(_common._kernel._prod, fastmath=True, cache=True)

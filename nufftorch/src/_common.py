@@ -25,7 +25,7 @@ class _iterator:
         point = tmp % readout_length
 
         return frame, batch, point
-
+                
     @staticmethod
     def _nested_range(*args):
         return [list(range(i)) for i in args]
@@ -33,13 +33,6 @@ class _iterator:
     @staticmethod
     def _get_neighbourhood(*args):
         return tuple(itertools.product(*_iterator._nested_range(*args)))
-
-    @staticmethod
-    def _check_boundaries(frame, nframes):
-        frame = max(frame, 0)
-        frame = min(frame, nframes)
-
-        return frame
 
 
 class _kernel:
@@ -54,22 +47,22 @@ class _kernel:
         return value
 
     @staticmethod
-    def _ravel_index(index_arr, grid_shape, row_index, col_index, slice_index):
+    def _ravel_index(index_arr, grid_offset, row_index, col_index, slice_index):
         index = index_arr[0][row_index][col_index][slice_index[0]]
 
         for i in range(1, index_arr.shape[0]):
-            index += index_arr[i][row_index][col_index][slice_index[i]] * grid_shape[i-1]
+            index += index_arr[i][row_index][col_index][slice_index[i]] * grid_offset[i-1]
 
         return index
 
     @staticmethod
     def _make_evaluate(_prod, _ravel_index):   
-        def _evaluate(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, kernel_width, grid_shape):  
+        def _evaluate(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, kernel_width, grid_offset):  
             # get kernel value
             value = _prod(kernel_value, frame, sample_idx, neighbour_idx)
     
             # get flattened neighbour index
-            index = _ravel_index(kernel_idx, grid_shape, frame, sample_idx, neighbour_idx)
+            index = _ravel_index(kernel_idx, grid_offset, frame, sample_idx, neighbour_idx)
             
             return value, index
         
@@ -110,5 +103,3 @@ def _dot_product(out, in_a, in_b):
     for j in range(col):
         for i in range(row):
             out[j] += in_a[i][j] * in_b[j]
-
-    return out

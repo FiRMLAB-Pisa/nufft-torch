@@ -38,8 +38,8 @@ from nufftorch.src import _routines
 
 def nufft(image: Tensor,
           coord: Tensor,
-          oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-          width: Union[int, List[int], Tuple[int]] = 3,
+          oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+          width: Union[int, List[int], Tuple[int]] = 4,
           basis: Union[None, Tensor] = None,
           device: Union[str, torch.device] = 'cpu',
           threadsperblock: int = 512) -> Tensor:
@@ -86,8 +86,8 @@ def nufft(image: Tensor,
 def nufft_adjoint(kdata: Tensor,
                   coord: Tensor,
                   shape: Union[int, List[int], Tuple[int]],
-                  oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-                  width: Union[int, List[int], Tuple[int]] = 3,
+                  oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+                  width: Union[int, List[int], Tuple[int]] = 4,
                   basis: Union[None, Tensor] = None,
                   device: Union[str, torch.device] = 'cpu',
                   threadsperblock: int = 512) -> Tensor:

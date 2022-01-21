@@ -7,25 +7,6 @@
 import torch
 
 
-# %% Utils
-class _utils:
-
-    @staticmethod
-    def normalize(data_in, ndim):
-        """Normalize Input between 0 and 1."""
-        center = int(data_in.shape[-1] // 2)
-        
-        if ndim == 2:
-            scale = torch.abs(data_in[..., center, center])
-            scale = scale[..., None, None]
-            
-        if ndim == 3:
-            scale = torch.abs(data_in[..., center, center, center])
-            scale = scale[..., None, None, None]
-
-        return data_in / scale
-
-
 # %% data generator
 class _kt_space_trajectory:
 

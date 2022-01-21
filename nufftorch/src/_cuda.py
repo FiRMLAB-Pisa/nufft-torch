@@ -26,16 +26,13 @@ _dot_product = cuda.jit(_common._dot_product, device=True, inline=True)
 @cuda.jit(fastmath=True)  # pragma: no cover
 def _batched_dot_product(data_out, data_in, matrix):
 
-    n_coeff, batch_size, _ = data_in.shape
+    n_points, batch_size, _ = data_in.shape
 
     i = cuda.grid(1)
-    if i < n_coeff*batch_size:
-        coeff = i // batch_size
+    if i < n_points*batch_size:
+        point = i // batch_size
         batch = i % batch_size
-
-        _dot_product(data_out[coeff][batch], matrix[coeff], data_in[coeff][batch])
-
-    return data_out
+        _dot_product(data_out[point][batch], matrix[point], data_in[point][batch])
 
 
 class _DeGridding:
@@ -96,7 +93,7 @@ class _DeGridding:
             nframes, batch_size, npts = noncart_data.shape
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
+            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
@@ -107,7 +104,7 @@ class _DeGridding:
 
                 # gather data within kernel radius
                 for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, gshape)
+                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value)
@@ -138,7 +135,7 @@ class _DeGridding:
             ncoeff = basis_adjoint.shape[-1]
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
+            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
@@ -149,7 +146,7 @@ class _DeGridding:
 
                 # gather data within kernel radius
                 for n in kernel_neighbourhood:
-                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, gshape)
+                    value, source = kernel(frame, target, n, kvalue, kidx, kwidth, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
@@ -282,9 +279,6 @@ class _iterator(_common._iterator):
     _get_noncart_points_parallelize_over_all = staticmethod(cuda.jit(
         _common._iterator._get_noncart_points_parallelize_over_all,
         device=True, inline=True))
-
-    _check_boundaries = staticmethod(cuda.jit(
-        _common._iterator._check_boundaries, device=True, inline=True))
 
 
 _prod = cuda.jit(_common._kernel._prod, device=True, inline=True)

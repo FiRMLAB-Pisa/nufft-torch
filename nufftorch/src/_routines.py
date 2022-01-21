@@ -155,20 +155,20 @@ def toeplitz_convolution(image: Tensor, toeplitz_dict: Dict) -> Tensor:
     # Reshape for computation
     ishape = list(image.shape)
     image = image.reshape(ishape[0], np.prod(ishape[1:-ndim]), *ishape[-ndim:])
-
+    
     # Zero-pad
     image = ZeroPad(oversamp, ishape[-ndim:])(image)
 
     # FFT
     kdata_in = FFT(image)(image, axes=range(-ndim, 0), norm=None, center=False)
-    
+
     # Perform convolution
     if islowrank:
         os_shape = kdata_in.shape
-        kdata_in = kdata_in.reshape(*kdata_in.shape[:2], int(np.prod(kdata_in.shape[-ndim:])))        
+        kdata_in = kdata_in.reshape(*kdata_in.shape[:2], int(np.prod(kdata_in.shape[-ndim:]))).T.contiguous()        
         kdata_out = torch.zeros(kdata_in.shape, dtype=kdata_in.dtype, device=kdata_in.device)
         Toeplitz(kdata_in.numel(), device_dict)(kdata_out, kdata_in, mtf)
-        kdata_out = kdata_out.reshape(os_shape)
+        kdata_out = kdata_out.T.reshape(os_shape).contiguous()
     else:
         kdata_out = mtf * kdata_in
 

@@ -162,13 +162,13 @@ class NUFFTFactory(AbstractFactory):
         # reformat coefficients
         value, index = self._reformat_sparse_coefficients(value, index, width, device)
         
-        # reformat grid shape and kernel width
-        shape = torch.tensor(shape, device=device)
+        # get grid offset and kernel width
+        offset = torch.tensor(shape, device=device).cumprod(dim=0)[:-1]
         width = torch.tensor(width, device=device)
-        shape, width = BackendBridge.pytorch2numba(shape, width)
+        offset, width = BackendBridge.pytorch2numba(offset, width)
         
         # pack kernel tuple
-        kernel_tuple = (value, index, width, shape)
+        kernel_tuple = (value, index, width, offset)
 
         return kernel_tuple
 
@@ -206,8 +206,8 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         basis, basis_adjoint = self._process_basis(basis, device)
 
         # prepare dcf for MTF/PSF estimation
-        dcf = self._prepare_dcf(dcf, device)
-                
+        dcf = self._prepare_dcf(dcf, basis_adjoint, device)
+                        
         # prepare Interpolator object
         interpolator = NUFFTFactory()(coord, shape, width, prep_osf, basis, device, threadsperblock)
         
@@ -247,9 +247,7 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         mtf = torch.fft.fftshift(mtf, dim=list(range(-self.ndim, 0)))
 
         if self.islowrank:
-            mtf = mtf.reshape(*mtf.shape[:2], np.prod(mtf.shape[2:]))
-        else:
-            mtf = mtf[:, None, ...]
+            mtf = mtf.reshape(*mtf.shape[:2], np.prod(mtf.shape[-self.ndim:])).T.contiguous()
 
         # remove NaN
         if self.isreal:
@@ -265,17 +263,25 @@ class NonCartesianToeplitzFactory(AbstractFactory):
         return mtf
     
     # utils
-    def _prepare_dcf(self, dcf, device):
+    def _prepare_dcf(self, dcf, basis_adjoint, device):
         # if dcf are not provided, assume uniform sampling density
         if dcf is None:
             dcf = torch.ones((self.nframes, 1, self.npts), torch.complex64, device=device)
+            
         else:
             dcf = dcf.clone().squeeze()
             dcf = dcf.to(torch.complex64).to(device)
             
             if len(dcf.shape) == 2:
                 dcf = dcf[:, None, :]
-
+                
+            if len(dcf.shape) == 1:
+                dcf = dcf[None, None, :]
+                
+        # multiply by basis
+        if basis_adjoint is not None:
+            dcf = basis_adjoint[..., None] * dcf
+            
         return dcf
     
     def _process_basis(self, basis, device):
