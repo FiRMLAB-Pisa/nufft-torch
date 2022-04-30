@@ -2,12 +2,15 @@
 """
 Basic test for test functionality.
 """
+import numpy as np
 import torch
 
-from lr_nufft_torch import module
-from lr_nufft_torch._util import prod
+
+from nufftorch import nn
+
 
 import utils
+
 
 def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     if ndim == 2:
@@ -26,6 +29,7 @@ def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     return ground_truth, basis, ktraj, dcf, shape
 
+
 def _adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
     # setup
@@ -38,47 +42,17 @@ def _adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     kdata = (basis[:,:,None,None] * kdata).sum(axis=0)
         
     # reconstruct image using lr_nufft_torch
-    FH = module.NUFFTAdjoint(ktraj, shape=shape, basis=basis)
+    FH = nn.NUFFTAdjoint(ktraj, shape=shape, basis=basis)
     image = FH(dcf * kdata.clone()).unsqueeze(axis=1)
     
     # reconstruct using torchkbnufft
     tkbFH = utils.tkbnufft_adjoint_factory(ktraj, im_size=shape)
     kdata = basis[:,:,None,None] * (dcf * kdata[None,...])
-    kdata = kdata.reshape((kdata.shape[0], 1, prod(kdata.shape[1:])))  
+    kdata = kdata.reshape((kdata.shape[0], 1, np.prod(kdata.shape[1:])))  
     image_tkb = tkbFH(kdata.clone())
     
     return image, image_tkb, ground_truth
     
-def _selfadjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
-    
-    # setup
-    ground_truth, basis, ktraj, dcf, shape = _setup_problem(npix, ndim, nechoes, nreadouts)
-    
-    # generate k-space data
-    tkbF = utils.tkbnufft_factory(ktraj, im_size=shape)
-    kdata = tkbF(ground_truth.clone().to(torch.complex64)).squeeze()
-    kdata = kdata.reshape((kdata.shape[0], *ktraj.shape[:-1]))  
-    kdata = (basis[:,:,None,None] * kdata).sum(axis=0)
-        
-    # reconstruct image using lr_nufft_torch
-    FH = module.NUFFTAdjoint(ktraj, shape=shape, basis=basis)
-    image = FH(dcf * kdata.clone()).unsqueeze(axis=1)
-    
-    # prepare self-adjoint
-    FHF = module.NUFFTSelfadjoint(ktraj, shape=shape, basis=basis, dcf=dcf)
-    image = FHF(image.clone())
-    
-    # reconstruct using torchkbnufft
-    tkbFH = utils.tkbnufft_adjoint_factory(ktraj, im_size=shape)
-    kdata = basis[:,:,None,None] * (dcf * kdata[None,...])
-    kdata = kdata.reshape((kdata.shape[0], 1, prod(kdata.shape[1:])))  
-    image_tkb = tkbFH(kdata.clone())
-    
-    # prepare self-adjoint
-    tkbFHF = utils.tkbnufft_selfadjoint_factory(ktraj, im_size=shape, dcf=dcf)
-    image_tkb = tkbFHF(image_tkb.clone())
-    
-    return image, image_tkb, ground_truth
 
 image, image_tkb, ground_truth = _adjoint()
-utils.show_image_series([torch.flip(ground_truth, dims=[-2,-1]), torch.abs(image), torch.flip(image_tkb, dims=[-2,-1])], 0)
+utils.show_image_series([torch.flip(ground_truth, dims=[-2,-1]), torch.abs(torch.flip(image.permute(0, 1, 3, 2), dims=[-2, -1])), torch.flip(image_tkb, dims=[-2,-1])], 0)
