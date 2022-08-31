@@ -44,6 +44,7 @@ class _DeGridding:
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_tuple
         kernel_width = kernel_tuple[-2]
+        ndim = kernel_tuple[0].shape[0]
 
         # get kernel neighbourhood
         kernel_neighbourhood = cuda.to_device(_iterator._get_neighbourhood(*kernel_width))
@@ -53,7 +54,7 @@ class _DeGridding:
 
         # select correct sub-routine
         if basis_adjoint is None:
-            callback = _DeGridding._get_callback()
+            callback = _DeGridding._get_callback(ndim)
 
             def _apply(self, noncart_data, cart_data):
                 return callback[blockspergrid, threadsperblock](noncart_data, cart_data,
@@ -61,7 +62,7 @@ class _DeGridding:
                                                                 kernel_neighbourhood)
 
         else:
-            callback = _DeGridding._get_lowrank_callback()
+            callback = _DeGridding._get_lowrank_callback(ndim)
 
             def _apply(self, noncart_data, cart_data):
                 return callback[blockspergrid, threadsperblock](noncart_data, cart_data,
@@ -73,10 +74,10 @@ class _DeGridding:
         _DeGridding.__call__ = _apply
         
     @staticmethod
-    def _get_callback():
+    def _get_callback(ndim):
 
         # kernel function
-        kernel = _kernel._evaluate
+        kernel = _kernel._evaluate()[ndim-1]
 
         # iterator function
         _get_target_point = _iterator._get_noncart_points_parallelize_over_all
@@ -93,7 +94,7 @@ class _DeGridding:
             nframes, batch_size, npts = noncart_data.shape
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
@@ -104,7 +105,7 @@ class _DeGridding:
 
                 # gather data within kernel radius
                 for point in kernel_neighbourhood:
-                    value, source = kernel(frame, target, point, kvalue, kidx, kwidth, grid_off)
+                    value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value)
@@ -113,10 +114,10 @@ class _DeGridding:
         return _callback
 
     @staticmethod
-    def _get_lowrank_callback():
+    def _get_lowrank_callback(ndim):
 
         # kernel function
-        kernel = _kernel._evaluate
+        kernel = _kernel._evaluate()[ndim-1]
 
         # iterator function
         _get_target_point = _iterator._get_noncart_points_parallelize_over_all
@@ -135,7 +136,7 @@ class _DeGridding:
             ncoeff = basis_adjoint.shape[-1]
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, grid_off = kernel_sparse_coefficients
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
@@ -146,7 +147,7 @@ class _DeGridding:
 
                 # gather data within kernel radius
                 for point in kernel_neighbourhood:
-                    value, source = kernel(frame, target, point, kvalue, kidx, kwidth, grid_off)
+                    value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
 
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
@@ -164,7 +165,8 @@ class _Gridding:
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_tuple
         kernel_width = kernel_tuple[-2]
-
+        ndim = kernel_tuple[0].shape[0]
+        
         # get kernel neighbourhood
         kernel_neighbourhood = cuda.to_device(_iterator._get_neighbourhood(*kernel_width))
 
@@ -173,7 +175,7 @@ class _Gridding:
 
         # select correct sub-routine
         if basis is None:
-            callback = _Gridding._get_callback()
+            callback = _Gridding._get_callback(ndim)
 
             def _apply(self, cart_data, noncart_data):
                 return callback[blockspergrid, threadsperblock](cart_data, noncart_data,
@@ -181,7 +183,7 @@ class _Gridding:
                                                                 kernel_neighbourhood)
 
         else:
-            callback = _Gridding._get_lowrank_callback()
+            callback = _Gridding._get_lowrank_callback(ndim)
 
             def _apply(self, cart_data, noncart_data):
                 return callback[blockspergrid, threadsperblock](cart_data, noncart_data,
@@ -193,13 +195,13 @@ class _Gridding:
         _Gridding.__call__ = _apply
 
     @staticmethod
-    def _get_callback():
-
+    def _get_callback(ndim):
+        
+        # kernel function
+        kernel = _kernel._evaluate()[ndim-1]
+        
         # iterator function
         _get_source_point = _iterator._get_noncart_points_parallelize_over_all
-
-        # kernel function
-        kernel = _kernel._evaluate
 
         # spread function
         spread = _spread._data
@@ -213,7 +215,7 @@ class _Gridding:
             nframes, batch_size, npts = noncart_data.shape
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
+            kvalue, kidx, _, gshape = kernel_sparse_coefficients
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
@@ -224,7 +226,7 @@ class _Gridding:
 
                 # spread data within kernel radius
                 for point in kernel_neighbourhood:
-                    value, target = kernel(frame, source, point, kvalue, kidx, kwidth, gshape)
+                    value, target = kernel(frame, source, point, kvalue, kidx, gshape)
 
                     # update
                     spread(cart_data, noncart_data, frame, batch, source, target, value)
@@ -233,13 +235,13 @@ class _Gridding:
         return _callback
 
     @staticmethod
-    def _get_lowrank_callback():
+    def _get_lowrank_callback(ndim):
+        
+        # kernel function
+        kernel = _kernel._evaluate()[ndim-1]
 
         # iterator function
         _get_source_point = _iterator._get_noncart_points_parallelize_over_all
-
-        # kernel function
-        kernel = _kernel._evaluate
 
         # spread function
         spread = _spread._data_lowrank
@@ -255,7 +257,7 @@ class _Gridding:
             ncoeff = basis.shape[0]
 
             # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, kwidth, gshape = kernel_sparse_coefficients
+            kvalue, kidx, _, gshape = kernel_sparse_coefficients
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
@@ -266,7 +268,7 @@ class _Gridding:
 
                 # spread data within kernel radius
                 for point in kernel_neighbourhood:
-                    value, target = kernel(frame, source, point, kvalue, kidx, kwidth, gshape)
+                    value, target = kernel(frame, source, point, kvalue, kidx, gshape)
 
                     # update
                     spread(cart_data, noncart_data, frame, batch, source, target, value, basis, ncoeff)
@@ -281,15 +283,20 @@ class _iterator(_common._iterator):
         device=True, inline=True))
 
 
-_prod = cuda.jit(_common._kernel._prod, device=True, inline=True)
-_ravel_index = cuda.jit(_common._kernel._ravel_index, device=True, inline=True)
-
-
 class _kernel(_common._kernel):
-
-    # precomputed Kernel evaluation
-    _evaluate = staticmethod(
-        cuda.jit(_common._kernel._make_evaluate(_prod, _ravel_index), device=True, inline=True))
+    
+    @staticmethod
+    def _evaluate():
+        
+        # get base functions
+        _evaluate_1d, _evaluate_2d, _evaluate_3d = _common._kernel._make_evaluate()
+        
+        # jit 
+        _evaluate_1d = cuda.jit(_evaluate_1d, device=True, inline=True)
+        _evaluate_2d = cuda.jit(_evaluate_2d, device=True, inline=True)
+        _evaluate_3d = cuda.jit(_evaluate_3d, device=True, inline=True)
+        
+        return _evaluate_1d, _evaluate_2d, _evaluate_3d
 
 
 class _gather(_common._gather):

@@ -4,6 +4,12 @@ Utility functions to benchmark lr-nufft-torch.
 
 Compares performance with torchkbnufft.
 """
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
+import sys
+sys.path.append("./torchkbnufft/")
+
 from typing import List, Tuple, Union
 
 import numpy as np
@@ -18,11 +24,6 @@ import warnings
 
 warnings.simplefilter('ignore', category=FutureWarning)
 warnings.simplefilter('ignore', category=np.VisibleDeprecationWarning)
-
-
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-
 
 def create_radial_trajectory(ndims: int, matrix_size: int, nreadouts: int, nframes: int) -> Tuple[Tensor, Tensor]:
     """ Generate golden angle (means) 2D (3D projection) radial trajectory
@@ -236,7 +237,7 @@ def plot_signal_and_basis(basis: Tensor, signal: Union[None, Tensor] = None):
         plt.ylabel("signal magnitude [a.u.]", fontsize=20)
 
 
-def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union[Tensor]):
+def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union[Tensor], xlabel='', ylabel=''):
     """ Show image series (i.e. set of singular values).
 
     Args:
@@ -257,13 +258,14 @@ def show_image_series(image_series: Union[List, Tuple, Tensor], slice_idx: Union
         x = torch.cat(x, dim=1)  # pylint: disable=no-member
 
     # show
-    plt.imshow(torch.abs(x), cmap='gray',
-               interpolation='lanczos'), plt.axis('off')
-
-
+    plt.imshow(torch.abs(x), cmap='gray', interpolation='lanczos')
+    plt.xticks([])
+    plt.yticks([])
+    plt.xlabel(xlabel, fontsize=18)
+    plt.ylabel(ylabel, fontsize=12)
+    
+ 
 # %% Utils
-
-
 def _create_2d_radial(matrix_size, nframes):
     # create spoke
     spokelength = matrix_size * 2

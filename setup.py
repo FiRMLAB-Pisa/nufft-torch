@@ -9,11 +9,11 @@ here = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(here, "README.md")) as f:
     long_description = f.read()
 
-install_requires = ["torch>=1.10", "numpy", "numba"]
+install_requires = ["torch>=1.10", "numpy", "numba", "pytest"]
 
 setuptools.setup(
     name="nufftorch",
-    version=0.1,
+    version=0.5,
 
     description="Pytorch-based Fourier Transform with embedded low-rank subspace projection.",
     long_description=long_description,

@@ -19,6 +19,8 @@ import torch
 
 from torch import Tensor
 
+import time
+
 from nufftorch.src._subroutines import (Apodize,
                                         Crop,
                                         DeGrid,

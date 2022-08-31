@@ -36,39 +36,49 @@ class _iterator:
 
 
 class _kernel:
-
-    @staticmethod
-    def _prod(value_arr, row_index, col_index, slice_index):
-        value = value_arr[0][row_index][col_index][slice_index[0]]
-        
-        for i in range(1, value_arr.shape[0]):
-            value *= value_arr[i][row_index][col_index][slice_index[i]]
-
-        return value
-
-    @staticmethod
-    def _ravel_index(index_arr, grid_offset, row_index, col_index, slice_index):
-        index = index_arr[0][row_index][col_index][slice_index[0]]
-
-        for i in range(1, index_arr.shape[0]):
-            index += index_arr[i][row_index][col_index][slice_index[i]] * grid_offset[i-1]
-
-        return index
-
-    @staticmethod
-    def _make_evaluate(_prod, _ravel_index):   
-        def _evaluate(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, kernel_width, grid_offset):  
-            # get kernel value
-            value = _prod(kernel_value, frame, sample_idx, neighbour_idx)
     
-            # get flattened neighbour index
-            index = _ravel_index(kernel_idx, grid_offset, frame, sample_idx, neighbour_idx)
+    @staticmethod
+    def _make_evaluate():
+        
+        def _evaluate_1d(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, grid_offset):  
+            
+            # get value
+            value = kernel_value[0][frame][sample_idx][neighbour_idx[0]]
+            
+            # get index
+            index = kernel_idx[0][frame][sample_idx][neighbour_idx[0]]
             
             return value, index
         
-        return _evaluate
+        def _evaluate_2d(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, grid_offset):  
+            
+            # get value
+            value = kernel_value[0][frame][sample_idx][neighbour_idx[0]] * \
+                    kernel_value[1][frame][sample_idx][neighbour_idx[1]]
+                    
+            # get index
+            index = kernel_idx[0][frame][sample_idx][neighbour_idx[0]] + \
+                    kernel_idx[1][frame][sample_idx][neighbour_idx[1]] * grid_offset[0]
+                    
+            return value, index
+        
+        def _evaluate_3d(frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, grid_offset):  
+            
+            # get value
+            value = kernel_value[0][frame][sample_idx][neighbour_idx[0]] * \
+                    kernel_value[1][frame][sample_idx][neighbour_idx[1]] * \
+                    kernel_value[2][frame][sample_idx][neighbour_idx[2]]
+                    
+            # get index
+            index = kernel_idx[0][frame][sample_idx][neighbour_idx[0]] + \
+                    kernel_idx[1][frame][sample_idx][neighbour_idx[1]] * grid_offset[0] + \
+                    kernel_idx[2][frame][sample_idx][neighbour_idx[2]] * grid_offset[1]
+                    
+            return value, index
+        
+        return _evaluate_1d, _evaluate_2d, _evaluate_3d
 
-
+    
 class _gather:
 
     @staticmethod

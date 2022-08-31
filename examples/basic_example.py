@@ -60,4 +60,9 @@ def _adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     
 
 image, image_tkb, ground_truth = _adjoint(nechoes=1000, nreadouts=5000)
-utils.show_image_series([torch.flip(ground_truth, dims=[-2,-1]), torch.abs(torch.flip(image.permute(0, 1, 3, 2), dims=[-2, -1])), torch.flip(image_tkb, dims=[-2,-1])], 0)
+utils.show_image_series([torch.flip(ground_truth, dims=[-2,-1]), 
+                         torch.abs(torch.flip(image.permute(0, 1, 3, 2), dims=[-2, -1])), 
+                         torch.flip(image_tkb, dims=[-2,-1])], 
+                        0, 
+                        ylabel="torch-kb-nufft            nufft-torch             ground truth",
+                        xlabel="$\phi_1$                  $\phi_2$                  $\phi_3$                  $\phi_4$")
