@@ -9,7 +9,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(here, "README.md")) as f:
     long_description = f.read()
 
-install_requires = ["torch==1.10", "numpy", "numba"]
+install_requires = ["torch>=1.10", "numpy", "numba"]
 
 setuptools.setup(
     name="nufftorch",
