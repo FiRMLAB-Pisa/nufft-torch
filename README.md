@@ -1,11 +1,13 @@
-# LR-NUFFT-Torch
+# NUFFT-Torch
+
 Python-based differentiable NUFFT package optimized for multi-echo and model-based MRI.
 
 ## Getting Started
 
 ### Installation
 
-LR-NUFFT-Torch can be installed using pip:
+NUFFT-Torch can be installed using pip:
+
 
 1. Clone the repo
 
@@ -13,7 +15,7 @@ LR-NUFFT-Torch can be installed using pip:
 git clone git@github.com:FiRMLAB-Pisa/nufft-torch.git
   ```
 
-2. Navigato to the repository root folder and install using pip
+2. Navigate to the repository root folder and install using pip:
 
   ```
    pip install -e .
@@ -25,7 +27,7 @@ Check `basic_example.py` in the `benchmark`folder for a simple usage example (Co
 
 ## Other Packages
 
-The package is inspired 
+The package is inspired by:
 
 1. [torchkbnufft](https://github.com/mmuckley/torchkbnufft) (Pytorch implementation of Michigan Image Reconstruction Toolbox NUFFT)
 2. [SigPy](https://github.com/mikgroup/sigpy) (for Numpy arrays, Numba (for CPU) and CuPy (for GPU) backends)

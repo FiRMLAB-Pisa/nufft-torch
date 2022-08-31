@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""" Setup script for lr-nufft-torch."""
+""" Setup script for nufft-torch."""
 import os
 
 import setuptools
@@ -9,17 +9,17 @@ here = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(here, "README.md")) as f:
     long_description = f.read()
 
-install_requires = ["torch>=1.10", "numpy", "numba"]
+install_requires = ["torch>=1.10", "numpy", "numba", "pytest"]
 
 setuptools.setup(
-    name="lr-nufft-torch",
-    version=0.1,
+    name="nufftorch",
+    version=0.5,
 
-    description="Pytorch-based NUFFT with embedded low-rank subspace projection.",
+    description="Pytorch-based Fourier Transform with embedded low-rank subspace projection.",
     long_description=long_description,
     long_description_content_type="text/markdown",
 
-    url="https://github.com/FiRMLAB-Pisa/lr-nufft-torch",
+    url="https://github.com/FiRMLAB-Pisa/nufft-torch",
 
     author="Matteo Cencini",
     author_email="matteo.cencini@gmail.com",
@@ -43,9 +43,9 @@ setuptools.setup(
 
     keywords=["MRI", "model-based", "NUFFT"],
 
-    packages=["lr_nufft_torch"],
-    package_dir={"lr_nufft_torch": "lr_nufft_torch"},
+    packages=["nufftorch"],
+    package_dir={"nufftorch": "nufftorch"},
     python_requires=">=3.6",
 
-    install_requires=["numpy"],
+    install_requires=install_requires,
 )

@@ -1,0 +1,3 @@
+[submodule "examples/torchkbnufft"]
+	path = examples/torchkbnufft
+	url = https://github.com/mmuckley/torchkbnufft.git

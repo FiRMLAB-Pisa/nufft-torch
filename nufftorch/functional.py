@@ -24,20 +24,27 @@ model-based MRI reconstructions.
      IEEE Trans Med Imaging. 2014;33(12):2311-2322. doi:10.1109/TMI.2014.2337321
 
 """
-from typing import List, Tuple, Dict, Union
+# pylint: disable=no-member
+# pylint: disable=protected-access
+# pylint: disable=too-many-arguments
 
+from typing import List, Tuple, Union
+
+import torch
 from torch import Tensor
 
-from lr_nufft_torch import _fourier
+from nufftorch.src import _routines
 
 
 def nufft(image: Tensor,
           coord: Tensor,
-          oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-          width: Union[int, List[int], Tuple[int]] = 3,
+          oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+          width: Union[int, List[int], Tuple[int]] = 4,
           basis: Union[None, Tensor] = None,
-          device: str = 'cpu') -> Dict:
+          device: Union[str, torch.device] = 'cpu',
+          threadsperblock: int = 512) -> Tensor:
     """Non-uniform Fast Fourier Transform.
+    
     Args:
         image (tensor): Input data in image space of shape [n, ..., nz, ny, nx],
                         where n can be number of frames or low-rank subspace
@@ -67,11 +74,11 @@ def nufft(image: Tensor,
     shape = image.shape[-ndim:]
 
     # Prepare interpolator object
-    interpolator = _fourier.prepare_nufft(
-        coord, shape, oversamp, width, basis, device)
+    interpolator = _routines.prepare_nufft(
+        coord, shape, oversamp, width, basis, device, threadsperblock)
 
     # Calculate k-space data
-    kdata = _fourier.nufft(image, interpolator)
+    kdata = _routines.nufft(image, interpolator)
 
     return kdata
 
@@ -79,11 +86,13 @@ def nufft(image: Tensor,
 def nufft_adjoint(kdata: Tensor,
                   coord: Tensor,
                   shape: Union[int, List[int], Tuple[int]],
-                  oversamp: Union[float, List[float], Tuple[float]] = 1.125,
-                  width: Union[int, List[int], Tuple[int]] = 3,
+                  oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+                  width: Union[int, List[int], Tuple[int]] = 4,
                   basis: Union[None, Tensor] = None,
-                  device: str = 'cpu') -> Dict:
+                  device: Union[str, torch.device] = 'cpu',
+                  threadsperblock: int = 512) -> Tensor:
     """Adjoint Non-uniform Fast Fourier Transform.
+    
     Args:
         kdata (tensor): Input data in  Fourier space of shape [nframes, ..., coord_shape],
                         where  ... is a set f batches dimensions
@@ -111,10 +120,10 @@ def nufft_adjoint(kdata: Tensor,
         IEEE transactions on medical imaging, 24(6), 799-808.
     """
     # Prepare interpolator object
-    interpolator = _fourier.prepare_nufft(
-        coord, shape, oversamp, width, basis, device)
+    interpolator = _routines.prepare_nufft(
+        coord, shape, oversamp, width, basis, device, threadsperblock)
 
     # Calculate k-space data
-    image = _fourier.nufft_adjoint(kdata, interpolator)
+    image = _routines.nufft_adjoint(kdata, interpolator)
 
     return image
