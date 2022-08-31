@@ -35,9 +35,6 @@ from nufftorch.src import _routines
 
 class AbstractNUFFT(torch.nn.Module):  # pylint: disable=abstract-method
     """ common class for forward and adjoint NUFFT. """
-
-    interpolator: Dict = {}
-
     def __init__(self,
                  coord: Union[None, Tensor] = None,
                  shape: Union[None, int, List[int], Tuple[int]] = None,
@@ -51,11 +48,28 @@ class AbstractNUFFT(torch.nn.Module):  # pylint: disable=abstract-method
 
         # if provided, re-use precomputed interpolator.
         if interpolator is None:
-            self.interpolator = _routines.prepare_nufft(
-                coord, shape, oversamp, width, basis, device)
+            self.interpolator = _routines.prepare_nufft(coord, shape, oversamp, width, basis, device)
         else:
             self.interpolator = interpolator
+            
+    def _adjoint_linop(self):
+        raise NotImplementedError
+    
+    @property
+    def H(self):
+        r"""Return adjoint linear operator.
 
+        An adjoint linear operator :math:`A^H` for
+        a linear operator :math:`A` is defined as:
+
+        .. math:
+            \left< A x, y \right> = \left< x, A^H, y \right>
+
+        Returns:
+            Linop: adjoint linear operator.
+
+        """
+        return self._adjoint_linop()
 
 class NUFFT(AbstractNUFFT):
     """ Non-Uniform Fourier Transform operator with embedded low-rank projection.
@@ -96,7 +110,10 @@ class NUFFT(AbstractNUFFT):
                             coord.shape[:-1] used in prepare_nufft.
         """
         return _autograd._nufft.apply(image, self.interpolator)
-
+    
+    def _adjoint_linop(self):
+        return NUFFTAdjoint(interpolator=self.interpolator)
+    
 
 class NUFFTAdjoint(AbstractNUFFT):
     """ Adjoint Non-Uniform Fourier Transform operator with embedded low-rank projection.
@@ -132,6 +149,9 @@ class NUFFTAdjoint(AbstractNUFFT):
                             (coil, te, ...).
         """
         return _autograd._nufft_adjoint.apply(kdata, self.interpolator)
+    
+    def _adjoint_linop(self):
+        return NUFFT(interpolator=self.interpolator)
 
 
 class NUFFTSelfadjoint(torch.nn.Module):
@@ -173,5 +193,8 @@ class NUFFTSelfadjoint(torch.nn.Module):
                             (coil, te, ...).
         """
         return _autograd._nufft_selfadjoint.apply(image, self.toeplitz_kernel)
+    
+    def _adjoint_linop(self):
+        return self
 
 

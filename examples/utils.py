@@ -20,6 +20,10 @@ warnings.simplefilter('ignore', category=FutureWarning)
 warnings.simplefilter('ignore', category=np.VisibleDeprecationWarning)
 
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
+
 def create_radial_trajectory(ndims: int, matrix_size: int, nreadouts: int, nframes: int) -> Tuple[Tensor, Tensor]:
     """ Generate golden angle (means) 2D (3D projection) radial trajectory
     i.e. kooshball.

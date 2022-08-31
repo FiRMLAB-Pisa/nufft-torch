@@ -18,7 +18,12 @@ from nufftorch import nn
 import utils
 
 
-def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=10000):
+import warnings
+
+warnings.simplefilter('ignore', category=UserWarning)
+
+
+def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     if ndim == 2:
         shape = (npix, npix)
     else:
@@ -36,7 +41,7 @@ def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=10000):
     return ground_truth, basis, ktraj, dcf, shape
 
 
-def benchmark_lrnufftorch(npix=200, ndim=2, nechoes=100, nreadouts=100):
+def benchmark_nufftorch(npix=200, ndim=2, nechoes=100, nreadouts=100000):
     
     # setup
     ground_truth, basis, ktraj, dcf, shape = _setup_problem(npix, ndim, nechoes, nreadouts)
@@ -48,15 +53,15 @@ def benchmark_lrnufftorch(npix=200, ndim=2, nechoes=100, nreadouts=100):
     time_fwd = time.time() - t0
         
     # reconstruct image using nufft_torch
-    # FH = F.H
-    # t0 = time.time()
-    # image = FH(dcf * kdata.clone())
-    # time_adj = time.time() - t0
+    FH = F.H
+    t0 = time.time()
+    image = FH(dcf * kdata.clone())
+    time_adj = time.time() - t0
     
-    return time_fwd#, time_adj#, time_selfadj
+    return time_fwd, time_adj #, time_selfadj
 
 
-def benchmark_torchkbnufft(npix=200, ndim=2, nechoes=100, nreadouts=100):   
+def benchmark_torchkbnufft(npix=200, ndim=2, nechoes=100, nreadouts=100000):   
     # setup
     ground_truth, basis, ktraj, dcf, shape = _setup_problem(npix, ndim, nechoes, nreadouts)
     
@@ -76,38 +81,38 @@ def benchmark_torchkbnufft(npix=200, ndim=2, nechoes=100, nreadouts=100):
     image = tkbFH(kdata.clone())
     time_adj = time.time() - t0
     
-    return time_fwd, time_adj#, time_selfadj
+    return time_fwd, time_adj #, time_selfadj
 
 
 # get timings
-# time_fwd_lrnftorch, time_adj_lrnftorch = benchmark_lrnufftorch() 
-time_fwd_torchkbnufft, time_adj_torchkbnufft = benchmark_torchkbnufft()
+time_fwd_nftorch, time_adj_nftorch = benchmark_nufftorch(nechoes=1000, nreadouts=100000) 
+time_fwd_torchkbnufft, time_adj_torchkbnufft = benchmark_torchkbnufft(nechoes=1000, nreadouts=100000)
 
 
 # plot results
-# labels = ['forward NUFFT', 'adjoint NUFFT']
-# time_tkb = [time_fwd_torchkbnufft, time_adj_torchkbnufft]
-# time_lr = [time_fwd_lrnftorch, time_adj_lrnftorch]
+labels = ['forward NUFFT', 'adjoint NUFFT']
+time_tkb = [time_fwd_torchkbnufft, time_adj_torchkbnufft]
+time_nftorch = [time_fwd_nftorch, time_adj_nftorch]
 
 
-# x = np.arange(len(labels))  # the label locations
-# width = 0.35  # the width of the bars
+x = np.arange(len(labels))  # the label locations
+width = 0.35  # the width of the bars
 
-# fig, ax = plt.subplots()
-# rects1 = ax.bar(x + width/2, time_tkb, width, label='torch-kb-nufft')
-# rects2 = ax.bar(x - width/2, time_lr, width, label='nufft-torch')
+fig, ax = plt.subplots()
+rects1 = ax.bar(x + width/2, time_tkb, width, label='torch-kb-nufft')
+rects2 = ax.bar(x - width/2, time_nftorch, width, label='nufft-torch')
 
-# # Add some text for labels, title and custom x-axis tick labels, etc.
-# ax.set_ylabel('Execution Time [s]', fontsize=20)
-# ax.set_title('Benchmark', fontsize=20)
-# ax.set_xticks(x)
-# ax.set_xticklabels(labels)
-# ax.legend(fontsize=20)
+# Add some text for labels, title and custom x-axis tick labels, etc.
+ax.set_ylabel('Execution Time [s]', fontsize=20)
+ax.set_title('Benchmark', fontsize=20)
+ax.set_xticks(x)
+ax.set_xticklabels(labels)
+ax.legend(fontsize=20)
 
-# ax.bar_label(rects1, padding=3, fontsize=20)
-# ax.bar_label(rects2, padding=3, fontsize=20)
+ax.bar_label(rects1, padding=3, fontsize=20)
+ax.bar_label(rects2, padding=3, fontsize=20)
 
-# fig.tight_layout()
+fig.tight_layout()
 
-# plt.show()
+plt.show()
 

@@ -88,7 +88,7 @@ class _gather:
         # iterate over subspace coefficients
         for coeff in range(ncoeff):
             # get input locations
-            idx_in = (frame, batch, index_in)
+            idx_in = (coeff, batch, index_in)
 
             # get total weight
             weight = kernel_value * basis_adjoint[frame, coeff]

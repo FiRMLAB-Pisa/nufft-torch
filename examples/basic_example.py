@@ -12,6 +12,11 @@ from nufftorch import nn
 import utils
 
 
+import warnings
+
+warnings.simplefilter('ignore', category=UserWarning)
+
+
 def _setup_problem(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     if ndim == 2:
         shape = (npix, npix)
@@ -54,5 +59,5 @@ def _adjoint(npix=200, ndim=2, nechoes=1000, nreadouts=100000):
     return image, image_tkb, ground_truth
     
 
-image, image_tkb, ground_truth = _adjoint()
+image, image_tkb, ground_truth = _adjoint(nechoes=1000, nreadouts=5000)
 utils.show_image_series([torch.flip(ground_truth, dims=[-2,-1]), torch.abs(torch.flip(image.permute(0, 1, 3, 2), dims=[-2, -1])), torch.flip(image_tkb, dims=[-2,-1])], 0)
