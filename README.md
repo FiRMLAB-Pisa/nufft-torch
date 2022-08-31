@@ -20,7 +20,6 @@ git clone git@github.com:FiRMLAB-Pisa/nufft-torch.git
   ```
    pip install -e .
   ```
-
 ### Usage
 
 Check `basic_example.py` in the `benchmark`folder for a simple usage example (Coming Soon: proper documentation and examples.)
