@@ -13,8 +13,8 @@
 [![Project generated with PyScaffold](https://img.shields.io/badge/-PyScaffold-005CA0?logo=pyscaffold)](https://pyscaffold.org/)
 
 <picture>
-    <source srcset="https://github.com/FiRMLAB/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo_dark.png"  media="(prefers-color-scheme: dark)">
-    <img src="https://github.com/FiRMLAB/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo.png">
+    <source srcset="https://github.com/FiRMLAB-Pisa/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo_dark.png"  media="(prefers-color-scheme: dark)">
+    <img src="https://github.com/FiRMLAB-Pisa/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo.png">
 </picture>
 --------------------------------------------------------------------------------
 
