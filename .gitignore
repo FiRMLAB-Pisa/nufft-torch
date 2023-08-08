@@ -43,6 +43,7 @@ build/*
 dist/*
 sdist/*
 docs/api/*
+docs/build/*
 docs/_rst/*
 docs/_build/*
 cover/*
