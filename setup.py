@@ -1,51 +1,21 @@
-# -*- coding: utf-8 -*-
-""" Setup script for nufft-torch."""
-import os
+"""
+    Setup file for nufft-torch.
+    Use setup.cfg to configure your project.
 
-import setuptools
+    This file was generated with PyScaffold 4.4.
+    PyScaffold helps you to put up the scaffold of your new Python project.
+    Learn more under: https://pyscaffold.org/
+"""
+from setuptools import setup
 
-here = os.path.abspath(os.path.dirname(__file__))
-
-with open(os.path.join(here, "README.md")) as f:
-    long_description = f.read()
-
-install_requires = ["torch>=1.10", "numpy", "numba", "pytest"]
-
-setuptools.setup(
-    name="nufftorch",
-    version=0.5,
-
-    description="Pytorch-based Fourier Transform with embedded low-rank subspace projection.",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-
-    url="https://github.com/FiRMLAB-Pisa/nufft-torch",
-
-    author="Matteo Cencini",
-    author_email="matteo.cencini@gmail.com",
-
-    license="MIT",
-
-    classifiers=[
-        "Development Status ::2 - Pre-Alpha",
-
-        "Intended Audience :: Education",
-        "Intended Audience :: Healthcare Industry",
-        "Intended Audience :: Science/Research",
-
-        "License :: OSI Approved :: MIT License",
-
-        "Programming Language :: Python :: 3",
-
-        "Topic :: Scientific/Engineering :: Medical Science Apps.",
-        "Topic :: Scientific/Engineering :: Physics",
-    ],
-
-    keywords=["MRI", "model-based", "NUFFT"],
-
-    packages=["nufftorch"],
-    package_dir={"nufftorch": "nufftorch"},
-    python_requires=">=3.6",
-
-    install_requires=install_requires,
-)
+if __name__ == "__main__":
+    try:
+        setup(use_scm_version={"version_scheme": "no-guess-dev"})
+    except:  # noqa
+        print(
+            "\n\nAn error occurred while building the project, "
+            "please ensure you have the most updated version of setuptools, "
+            "setuptools_scm and wheel with:\n"
+            "   pip install -U setuptools setuptools_scm wheel\n\n"
+        )
+        raise
