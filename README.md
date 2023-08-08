@@ -16,7 +16,6 @@
     <source srcset="https://github.com/FiRMLAB-Pisa/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo_dark.png"  media="(prefers-color-scheme: dark)">
     <img src="https://github.com/FiRMLAB-Pisa/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo.png">
 </picture>
---------------------------------------------------------------------------------
 
 Python-based differentiable NUFFT package optimized for multi-echo and model-based MRI.
 
