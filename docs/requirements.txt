@@ -1,0 +1,11 @@
+sphinx-book-theme
+myst-nb
+sphinx-copybutton
+sphinx-design
+sphinx-examples
+sphinx-tabs
+sphinx-thebe
+sphinx-togglebutton
+sphinxcontrib-bibtex
+sphinxext-opengraph
+sphinx-gallery
