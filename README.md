@@ -13,10 +13,9 @@
 [![Project generated with PyScaffold](https://img.shields.io/badge/-PyScaffold-005CA0?logo=pyscaffold)](https://pyscaffold.org/)
 
 <picture>
-    <source srcset="https://github.com/FiRMLAB/nufft-torch/blob/main/docs/source/_static/nufftorch_logo_dark.png"  media="(prefers-color-scheme: dark)">
-    <img src="https://github.com/FiRMLAB/nufft-torch/blob/main/docs/source/_static/nufftorch_logo.png">
+    <source srcset="https://github.com/FiRMLAB/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo_dark.png"  media="(prefers-color-scheme: dark)">
+    <img src="https://github.com/FiRMLAB/nufft-torch/blob/refactor/docs/source/_static/nufftorch_logo.png">
 </picture>
-<img src="https://github.com/FiRMLAB/nufft-torch/blob/main/docs/source/_static/nufftorch_logo.png" width="761" height="248">
 --------------------------------------------------------------------------------
 
 Python-based differentiable NUFFT package optimized for multi-echo and model-based MRI.
