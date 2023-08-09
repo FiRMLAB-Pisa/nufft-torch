@@ -32,15 +32,18 @@ from torch import Tensor
 
 from nufftorch.subroutines import _routines
 
-def nufft(image: Tensor,
-          coord: Tensor,
-          oversamp: Union[float, List[float], Tuple[float]] = 2.0,
-          width: Union[int, List[int], Tuple[int]] = 4,
-          basis: Union[None, Tensor] = None,
-          device: Union[str, torch.device] = 'cpu',
-          threadsperblock: int = 512) -> Tensor:
+
+def nufft(
+    image: Tensor,
+    coord: Tensor,
+    oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+    width: Union[int, List[int], Tuple[int]] = 4,
+    basis: Union[None, Tensor] = None,
+    device: Union[str, torch.device] = "cpu",
+    threadsperblock: int = 512,
+) -> Tensor:
     """Non-uniform Fast Fourier Transform.
-    
+
     Args:
         image (tensor): Input data in image space of shape [n, ..., nz, ny, nx],
                         where n can be number of frames or low-rank subspace
@@ -64,7 +67,7 @@ def nufft(image: Tensor,
         Beatty, P. J., Nishimura, D. G., & Pauly, J. M. (2005).
         Rapid gridding reconstruction with a minimal oversampling ratio.
         IEEE transactions on medical imaging, 24(6), 799-808.
-        
+
     """
     # Get image dimension
     ndim = coord.shape[-1]
@@ -72,7 +75,8 @@ def nufft(image: Tensor,
 
     # Prepare interpolator object
     interpolator = _routines.prepare_nufft(
-        coord, shape, oversamp, width, basis, device, threadsperblock)
+        coord, shape, oversamp, width, basis, device, threadsperblock
+    )
 
     # Calculate k-space data
     kdata = _routines.nufft(image, interpolator)
@@ -80,16 +84,18 @@ def nufft(image: Tensor,
     return kdata
 
 
-def nufft_adjoint(kdata: Tensor,
-                  coord: Tensor,
-                  shape: Union[int, List[int], Tuple[int]],
-                  oversamp: Union[float, List[float], Tuple[float]] = 2.0,
-                  width: Union[int, List[int], Tuple[int]] = 4,
-                  basis: Union[None, Tensor] = None,
-                  device: Union[str, torch.device] = 'cpu',
-                  threadsperblock: int = 512) -> Tensor:
+def nufft_adjoint(
+    kdata: Tensor,
+    coord: Tensor,
+    shape: Union[int, List[int], Tuple[int]],
+    oversamp: Union[float, List[float], Tuple[float]] = 2.0,
+    width: Union[int, List[int], Tuple[int]] = 4,
+    basis: Union[None, Tensor] = None,
+    device: Union[str, torch.device] = "cpu",
+    threadsperblock: int = 512,
+) -> Tensor:
     """Adjoint Non-uniform Fast Fourier Transform.
-    
+
     Args:
         kdata (tensor): Input data in  Fourier space of shape [nframes, ..., coord_shape],
                         where  ... is a set f batches dimensions
@@ -115,11 +121,12 @@ def nufft_adjoint(kdata: Tensor,
         Beatty, P. J., Nishimura, D. G., & Pauly, J. M. (2005).
         Rapid gridding reconstruction with a minimal oversampling ratio.
         IEEE transactions on medical imaging, 24(6), 799-808.
-        
+
     """
     # Prepare interpolator object
     interpolator = _routines.prepare_nufft(
-        coord, shape, oversamp, width, basis, device, threadsperblock)
+        coord, shape, oversamp, width, basis, device, threadsperblock
+    )
 
     # Calculate k-space data
     image = _routines.nufft_adjoint(kdata, interpolator)

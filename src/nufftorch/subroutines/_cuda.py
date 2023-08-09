@@ -11,29 +11,28 @@ _dot_product = cuda.jit(_common._dot_product, device=True, inline=True)
 
 @cuda.jit(fastmath=True)  # pragma: no cover
 def _batched_dot_product(data_out, data_in, matrix):
-
     n_points, batch_size, _ = data_in.shape
 
     i = cuda.grid(1)
-    if i < n_points*batch_size:
+    if i < n_points * batch_size:
         point = i // batch_size
         batch = i % batch_size
         _dot_product(data_out[point][batch], matrix[point], data_in[point][batch])
 
 
 class _DeGridding:
-
     apply: Callable
 
     def __init__(self, data_size, kernel_tuple, basis_adjoint, threadsperblock):
-
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_tuple
         kernel_width = kernel_tuple[-2]
         ndim = kernel_tuple[0].shape[0]
 
         # get kernel neighbourhood
-        kernel_neighbourhood = cuda.to_device(_iterator._get_neighbourhood(*kernel_width))
+        kernel_neighbourhood = cuda.to_device(
+            _iterator._get_neighbourhood(*kernel_width)
+        )
 
         # calculate blocks per grid
         blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
@@ -43,27 +42,32 @@ class _DeGridding:
             callback = _DeGridding._get_callback(ndim)
 
             def _apply(self, noncart_data, cart_data):
-                return callback[blockspergrid, threadsperblock](noncart_data, cart_data,
-                                                                kernel_sparse_coefficients,
-                                                                kernel_neighbourhood)
+                return callback[blockspergrid, threadsperblock](
+                    noncart_data,
+                    cart_data,
+                    kernel_sparse_coefficients,
+                    kernel_neighbourhood,
+                )
 
         else:
             callback = _DeGridding._get_lowrank_callback(ndim)
 
             def _apply(self, noncart_data, cart_data):
-                return callback[blockspergrid, threadsperblock](noncart_data, cart_data,
-                                                                kernel_sparse_coefficients,
-                                                                kernel_neighbourhood,
-                                                                basis_adjoint)
+                return callback[blockspergrid, threadsperblock](
+                    noncart_data,
+                    cart_data,
+                    kernel_sparse_coefficients,
+                    kernel_neighbourhood,
+                    basis_adjoint,
+                )
 
         # assign
         _DeGridding.__call__ = _apply
-        
+
     @staticmethod
     def _get_callback(ndim):
-
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate()[ndim - 1]
 
         # iterator function
         _get_target_point = _iterator._get_noncart_points_parallelize_over_all
@@ -72,10 +76,9 @@ class _DeGridding:
         gather = _gather._data
 
         @cuda.jit(fastmath=True)  # pragma: no cover
-        def _callback(noncart_data, cart_data,
-                      kernel_sparse_coefficients,
-                      kernel_neighbourhood):
-
+        def _callback(
+            noncart_data, cart_data, kernel_sparse_coefficients, kernel_neighbourhood
+        ):
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
 
@@ -84,8 +87,7 @@ class _DeGridding:
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
-            if i < nframes*batch_size*npts:
-
+            if i < nframes * batch_size * npts:
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
@@ -96,14 +98,12 @@ class _DeGridding:
                     # update
                     gather(noncart_data, cart_data, frame, batch, target, source, value)
 
-
         return _callback
 
     @staticmethod
     def _get_lowrank_callback(ndim):
-
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate()[ndim - 1]
 
         # iterator function
         _get_target_point = _iterator._get_noncart_points_parallelize_over_all
@@ -112,11 +112,13 @@ class _DeGridding:
         gather = _gather._data_lowrank
 
         @cuda.jit(fastmath=True)  # pragma: no cover
-        def _callback(noncart_data, cart_data,
-                      kernel_sparse_coefficients,
-                      kernel_neighbourhood,
-                      basis_adjoint):
-
+        def _callback(
+            noncart_data,
+            cart_data,
+            kernel_sparse_coefficients,
+            kernel_neighbourhood,
+            basis_adjoint,
+        ):
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis_adjoint.shape[-1]
@@ -126,8 +128,7 @@ class _DeGridding:
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
-            if i < nframes*batch_size*npts:
-
+            if i < nframes * batch_size * npts:
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
@@ -136,25 +137,34 @@ class _DeGridding:
                     value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
 
                     # update
-                    gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
-
+                    gather(
+                        noncart_data,
+                        cart_data,
+                        frame,
+                        batch,
+                        target,
+                        source,
+                        value,
+                        basis_adjoint,
+                        ncoeff,
+                    )
 
         return _callback
 
 
 class _Gridding:
-
     apply: Callable
 
     def __init__(self, data_size, kernel_tuple, basis, threadsperblock):
-
         # unpack kernel dict
         kernel_sparse_coefficients = kernel_tuple
         kernel_width = kernel_tuple[-2]
         ndim = kernel_tuple[0].shape[0]
-        
+
         # get kernel neighbourhood
-        kernel_neighbourhood = cuda.to_device(_iterator._get_neighbourhood(*kernel_width))
+        kernel_neighbourhood = cuda.to_device(
+            _iterator._get_neighbourhood(*kernel_width)
+        )
 
         # calculate blocks per grid
         blockspergrid = int((data_size + (threadsperblock - 1)) // threadsperblock)
@@ -164,28 +174,33 @@ class _Gridding:
             callback = _Gridding._get_callback(ndim)
 
             def _apply(self, cart_data, noncart_data):
-                return callback[blockspergrid, threadsperblock](cart_data, noncart_data,
-                                                                kernel_sparse_coefficients,
-                                                                kernel_neighbourhood)
+                return callback[blockspergrid, threadsperblock](
+                    cart_data,
+                    noncart_data,
+                    kernel_sparse_coefficients,
+                    kernel_neighbourhood,
+                )
 
         else:
             callback = _Gridding._get_lowrank_callback(ndim)
 
             def _apply(self, cart_data, noncart_data):
-                return callback[blockspergrid, threadsperblock](cart_data, noncart_data,
-                                                                kernel_sparse_coefficients,
-                                                                kernel_neighbourhood,
-                                                                basis)
+                return callback[blockspergrid, threadsperblock](
+                    cart_data,
+                    noncart_data,
+                    kernel_sparse_coefficients,
+                    kernel_neighbourhood,
+                    basis,
+                )
 
         # assign
         _Gridding.__call__ = _apply
 
     @staticmethod
     def _get_callback(ndim):
-        
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
-        
+        kernel = _kernel._evaluate()[ndim - 1]
+
         # iterator function
         _get_source_point = _iterator._get_noncart_points_parallelize_over_all
 
@@ -193,10 +208,9 @@ class _Gridding:
         spread = _spread._data
 
         @cuda.jit(fastmath=True)  # pragma: no cover
-        def _callback(cart_data, noncart_data,
-                      kernel_sparse_coefficients,
-                      kernel_neighbourhood):
-
+        def _callback(
+            cart_data, noncart_data, kernel_sparse_coefficients, kernel_neighbourhood
+        ):
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
 
@@ -205,8 +219,7 @@ class _Gridding:
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
-            if i < nframes*batch_size*npts:
-
+            if i < nframes * batch_size * npts:
                 # get current frame and k-space index
                 frame, batch, source = _get_source_point(i, batch_size, npts)
 
@@ -217,14 +230,12 @@ class _Gridding:
                     # update
                     spread(cart_data, noncart_data, frame, batch, source, target, value)
 
-
         return _callback
 
     @staticmethod
     def _get_lowrank_callback(ndim):
-        
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate()[ndim - 1]
 
         # iterator function
         _get_source_point = _iterator._get_noncart_points_parallelize_over_all
@@ -233,11 +244,13 @@ class _Gridding:
         spread = _spread._data_lowrank
 
         @cuda.jit(fastmath=True)  # pragma: no cover
-        def _callback(cart_data, noncart_data,
-                      kernel_sparse_coefficients,
-                      kernel_neighbourhood,
-                      basis):
-
+        def _callback(
+            cart_data,
+            noncart_data,
+            kernel_sparse_coefficients,
+            kernel_neighbourhood,
+            basis,
+        ):
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis.shape[0]
@@ -247,8 +260,7 @@ class _Gridding:
 
             # parallelize over frames, batches and k-space points
             i = cuda.grid(1)
-            if i < nframes*batch_size*npts:
-
+            if i < nframes * batch_size * npts:
                 # get current frame and k-space index
                 frame, batch, source = _get_source_point(i, batch_size, npts)
 
@@ -257,59 +269,63 @@ class _Gridding:
                     value, target = kernel(frame, source, point, kvalue, kidx, gshape)
 
                     # update
-                    spread(cart_data, noncart_data, frame, batch, source, target, value, basis, ncoeff)
+                    spread(
+                        cart_data,
+                        noncart_data,
+                        frame,
+                        batch,
+                        source,
+                        target,
+                        value,
+                        basis,
+                        ncoeff,
+                    )
 
         return _callback
 
 
 class _iterator(_common._iterator):
-
-    _get_noncart_points_parallelize_over_all = staticmethod(cuda.jit(
-        _common._iterator._get_noncart_points_parallelize_over_all,
-        device=True, inline=True))
+    _get_noncart_points_parallelize_over_all = staticmethod(
+        cuda.jit(
+            _common._iterator._get_noncart_points_parallelize_over_all,
+            device=True,
+            inline=True,
+        )
+    )
 
 
 class _kernel(_common._kernel):
-    
     @staticmethod
     def _evaluate():
-        
         # get base functions
         _evaluate_1d, _evaluate_2d, _evaluate_3d = _common._kernel._make_evaluate()
-        
-        # jit 
+
+        # jit
         _evaluate_1d = cuda.jit(_evaluate_1d, device=True, inline=True)
         _evaluate_2d = cuda.jit(_evaluate_2d, device=True, inline=True)
         _evaluate_3d = cuda.jit(_evaluate_3d, device=True, inline=True)
-        
+
         return _evaluate_1d, _evaluate_2d, _evaluate_3d
 
 
 class _gather(_common._gather):
-
-    _data = staticmethod(
-        cuda.jit(_common._gather._data, device=True, inline=True))
+    _data = staticmethod(cuda.jit(_common._gather._data, device=True, inline=True))
 
     _data_lowrank = staticmethod(
-        cuda.jit(_common._gather._data_lowrank, device=True, inline=True))
+        cuda.jit(_common._gather._data_lowrank, device=True, inline=True)
+    )
 
 
 @cuda.jit(device=True, inline=True)  # pragma: no cover
 def _update(output, index, value):
-    cuda.atomic.add(
-        output.real, index, value.real)
-    cuda.atomic.add(
-        output.imag, index, value.imag)
-        
-      
-class _spread:
+    cuda.atomic.add(output.real, index, value.real)
+    cuda.atomic.add(output.imag, index, value.imag)
 
+
+class _spread:
     @staticmethod
     @cuda.jit(device=True, inline=True)  # pragma: no cover
-    def _data(data_out, data_in,
-              frame, batch, index_in,
-              index_out, kernel_value):
-
+    def _data(data_out, data_in, frame, batch, index_in, index_out, kernel_value):
         # get input and output locations
         idx_in = (frame, batch, index_in)
         idx_out = (frame, batch, index_out)
@@ -319,11 +335,17 @@ class _spread:
 
     @staticmethod
     @cuda.jit(device=True, inline=True)  # pragma: no cover
-    def _data_lowrank(data_out, data_in,
-                      frame, batch, index_in,
-                      index_out, kernel_value,
-                      basis, ncoeff):
-
+    def _data_lowrank(
+        data_out,
+        data_in,
+        frame,
+        batch,
+        index_in,
+        index_out,
+        kernel_value,
+        basis,
+        ncoeff,
+    ):
         # get input locations
         idx_in = (frame, batch, index_in)
 
