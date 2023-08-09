@@ -1,3 +1,4 @@
+"""Routines to perform sampling of (Cartesian) under-sampled data."""
 import numba as nb
 import torch
 

@@ -1,3 +1,4 @@
+"""Routines to perform inverse gridding of (non-Cartesian) under-sampled data."""
 import numba as nb
 import torch
 

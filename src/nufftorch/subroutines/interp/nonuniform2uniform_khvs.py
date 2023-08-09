@@ -1,3 +1,4 @@
+"""Routines to perform gridding of (non-Cartesian) under-sampled data with simultaneous soft-weighted keyhole view-sharing."""
 import numba as nb
 import torch
 

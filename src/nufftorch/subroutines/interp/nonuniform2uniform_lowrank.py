@@ -1,3 +1,4 @@
+"""Routines to perform gridding of (non-Cartesian) under-sampled data with simultaneous low-rank subspace projection."""
 import numba as nb
 import torch
 
