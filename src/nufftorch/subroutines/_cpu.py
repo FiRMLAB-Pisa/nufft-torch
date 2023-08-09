@@ -1,4 +1,5 @@
 """CPU specific subroutines."""
+__all__ = []
 
 from typing import Tuple, Callable
 
@@ -7,10 +8,19 @@ import numba as nb
 
 from nufftorch.subroutines import _common
 
-
 @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-def _prepare_sparse_coefficient_matrix(value, index, coord, beta, shape):
+def prepare_sparse_coefficient_matrix(value, index, coord, beta, shape):
+    """
+    Prepare interpolator matrix for KB gridding / inverse-gridding along a single (1D) axis.
 
+    Args:
+        value (np.ndarray): output matrix storing (float) interpolation coefficients.
+        index (np.ndarray): output matrix storing (int) uniform coordinates for interpolated samples.
+        coord (np.ndarray): input (non-uniform) sample coordinates.
+        beta (float): KB-parameter.
+        shape (np.ndarray): output (1D) grid shape.
+
+    """
     # get sizes
     npts = coord.shape[0]
     width = index.shape[-1]
@@ -30,56 +40,55 @@ _dot_product = nb.njit(_common._dot_product, fastmath=True, cache=True)
 
 
 @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-def _batched_dot_product(data_out, data_in, matrix):
+def batched_dot_product(data_out, data_in, matrix):
+    """
+    Perform batched dot product between a stacks of vectors and a matrix.
 
+    Args:
+        data_out (np.ndarray): output stack of vectors of shape of shape (nbatches, ncols).
+        data_in (np.ndarray): stack of flattened matrices of shape (nbatches, nrows).
+        matrix (np.ndarray): flattened matrix of shape (nrows, ncols).
+
+    """
     n_points, batch_size, _ = data_in.shape
         
     for i in nb.prange(n_points * batch_size):
         point = i // batch_size
         batch = i % batch_size
-        _dot_product(data_out[point][batch], matrix[point], data_in[point][batch])
+        _dot_product(data_out[point][batch], data_in[point][batch], matrix[point])
 
 
-class _DeGridding:
+class InverseGriddingNN:
+    """Inverse (uniform-to-nonuniform) Nearest-Neighbour (NN) interpolation."""
 
     apply: Callable
 
-    def __init__(self, data_size, kernel_tuple, basis_adjoint, threadsperblock):
+    def __init__(self, data_size, index_tuple, basis_adjoint, threadsperblock):
 
-        # unpack kernel dict
-        kernel_sparse_coefficients = kernel_tuple
-        kernel_width = kernel_tuple[-2]
-        ndim = kernel_tuple[0].shape[0]
-
-        # get kernel neighbourhood
-        kernel_neighbourhood = np.array(_iterator._get_neighbourhood(*kernel_width))
+        # infer shape
+        ndim = index_tuple[0].shape[0]
 
         # select correct sub-routine
         if basis_adjoint is None:
-            callback = _DeGridding._get_callback(ndim)
+            callback = InverseGriddingNN._get_callback(ndim)
 
             def _apply(self, noncart_data, cart_data):
-                return callback(noncart_data, cart_data,
-                                kernel_sparse_coefficients,
-                                kernel_neighbourhood)
+                return callback(noncart_data, cart_data, index_tuple)
 
         else:
-            callback = _DeGridding._get_lowrank_callback(ndim)
+            callback = InverseGriddingNN._get_lowrank_callback(ndim)
 
             def _apply(self, noncart_data, cart_data):
-                return callback(noncart_data, cart_data,
-                                kernel_sparse_coefficients,
-                                kernel_neighbourhood,
-                                basis_adjoint)
+                return callback(noncart_data, cart_data, index_tuple, basis_adjoint)
 
         # assign
-        _DeGridding.__call__ = _apply
+        InverseGriddingNN .__call__ = _apply
 
     @staticmethod
     def _get_callback(ndim):
 
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate("NN")[ndim-1]
 
         # iterator function
         _get_target_point = _iterator._get_noncart_points_parallelize_over_all
@@ -88,15 +97,13 @@ class _DeGridding:
         gather = _gather._data
 
         @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-        def _callback(noncart_data, cart_data,
-                      kernel_sparse_coefficients,
-                      kernel_neighbourhood):
+        def _callback(noncart_data, cart_data, index_tuple):
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
 
-            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            # unpack index tuple: index and width (x, y, z) + grid shape (nx, ny, nz)
+            idx, _, grid_off = index_tuple
             
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
@@ -104,12 +111,11 @@ class _DeGridding:
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
-                # gather data within kernel radius
-                for point in kernel_neighbourhood:
-                    value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
+                # gather data from point
+                source = kernel(frame, target, idx, grid_off)
 
-                    # update
-                    gather(noncart_data, cart_data, frame, batch, target, source, value)
+                # update
+                gather(noncart_data, cart_data, frame, batch, target, source)
 
         return _callback
 
@@ -117,7 +123,7 @@ class _DeGridding:
     def _get_lowrank_callback(ndim):
 
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate("NN")[ndim-1]
 
         # iterator function
         _get_target_point = _iterator._get_noncart_points_parallelize_over_all
@@ -126,17 +132,14 @@ class _DeGridding:
         gather = _gather._data_lowrank
 
         @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
-        def _callback(noncart_data, cart_data,
-                      kernel_sparse_coefficients,
-                      kernel_neighbourhood,
-                      basis_adjoint):
+        def _callback(noncart_data, cart_data, index_tuple, basis_adjoint):
 
             # get shapes
             nframes, batch_size, npts = noncart_data.shape
             ncoeff = basis_adjoint.shape[-1]
 
-            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
-            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            # unpack index tuple: index and width (x, y, z) + grid shape (nx, ny, nz)
+            idx, _, grid_off = index_tuple
             
             # parallelize over frames, batches and k-space points
             for i in nb.prange(nframes*batch_size*npts):
@@ -144,18 +147,18 @@ class _DeGridding:
                 # get current frame and k-space index
                 frame, batch, target = _get_target_point(i, batch_size, npts)
 
-                # gather data within kernel radius
-                for point in kernel_neighbourhood:
-                    value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
+                # gather data from point
+                source = kernel(frame, target, idx, grid_off)
 
-                    # update
-                    gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
+                # update
+                gather(noncart_data, cart_data, frame, batch, source, basis_adjoint, ncoeff)
 
 
         return _callback
-
-
-class _Gridding:
+    
+    
+class GriddingNN:
+    """Forward (nonuniform-to-uniform) Nearest-Neighbour (NN) interpolation."""
 
     apply: Callable
 
@@ -171,7 +174,7 @@ class _Gridding:
 
         # select correct sub-routine
         if basis is None:
-            callback = _Gridding._get_callback(ndim)
+            callback = GriddingKB._get_callback(ndim)
 
             def _apply(self, cart_data, noncart_data):
                 return callback(cart_data, noncart_data,
@@ -179,7 +182,7 @@ class _Gridding:
                                 kernel_neighbourhood)
 
         else:
-            callback = _Gridding._get_lowrank_callback(ndim)
+            callback = GriddingKB._get_lowrank_callback(ndim)
 
             def _apply(self, cart_data, noncart_data):
                 return callback(cart_data, noncart_data,
@@ -188,13 +191,13 @@ class _Gridding:
                                 basis)
 
         # assign
-        _Gridding.__call__ = _apply
+        GriddingKB.__call__ = _apply
 
     @staticmethod
     def _get_callback(ndim):
                 
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate("NN")[ndim-1]
         
         # iterator function
         _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
@@ -230,13 +233,124 @@ class _Gridding:
                         spread(cart_data, noncart_data, frame, batch, source, target, value)
 
         return _callback
+    
 
+    @staticmethod
+    def _get_viewsharing_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("NN")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # update target
+                                spread(cart_data, noncart_data, frame + share_idx, batch, source, coeff, target, value, basis)
+
+        return _callback
+    
+    @staticmethod
+    def _get_swkh_viewsharing_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("NN")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width,
+                      spatial_weight,
+                      temporal_weight):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # update kernel according to spatial weight
+                            value *= spatial_weight[target]
+
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # select temporal weight
+                                tw = temporal_weight[frame, hwidth]
+                                # update target
+                                spread(cart_data, noncart_data, frame, batch, source, coeff, target, tw * value, basis)
+
+        return _callback
 
     @staticmethod
     def _get_lowrank_callback(ndim):
 
         # kernel function
-        kernel = _kernel._evaluate()[ndim-1]
+        kernel = _kernel._evaluate("NN")[ndim-1]
                 
         # iterator function
         _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
@@ -277,10 +391,583 @@ class _Gridding:
                             spread(cart_data, noncart_data, frame, batch, source, coeff, target, value, basis)
 
         return _callback
+    
+    @staticmethod
+    def _get_viewsharing_lowrank_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("NN")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # update target
+                                spread(cart_data, noncart_data, frame + share_idx, batch, source, coeff, target, value, basis)
+
+        return _callback
+    
+    @staticmethod
+    def _get_swkh_viewsharing_lowrank_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("NN")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width,
+                      spatial_weight,
+                      temporal_weight):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # update kernel according to spatial weight
+                            value *= spatial_weight[target]
+
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # select temporal weight
+                                tw = temporal_weight[frame, hwidth]
+                                # update target
+                                spread(cart_data, noncart_data, frame, batch, source, coeff, target, tw * value, basis)
+
+        return _callback
+    
+    
+class InverseGriddingKB:
+    """Inverse (uniform-to-nonuniform) Kaiser-Bessel (KB) interpolation."""
+
+    apply: Callable
+
+    def __init__(self, data_size, kernel_tuple, basis_adjoint, threadsperblock):
+
+        # unpack kernel dict
+        kernel_sparse_coefficients = kernel_tuple
+        kernel_width = kernel_tuple[-2]
+        ndim = kernel_tuple[0].shape[0]
+
+        # get kernel neighbourhood
+        kernel_neighbourhood = np.array(_iterator._get_neighbourhood(*kernel_width))
+
+        # select correct sub-routine
+        if basis_adjoint is None:
+            callback = InverseGriddingKB._get_callback(ndim)
+
+            def _apply(self, noncart_data, cart_data):
+                return callback(noncart_data, cart_data,
+                                kernel_sparse_coefficients,
+                                kernel_neighbourhood)
+
+        else:
+            callback = InverseGriddingKB._get_lowrank_callback(ndim)
+
+            def _apply(self, noncart_data, cart_data):
+                return callback(noncart_data, cart_data,
+                                kernel_sparse_coefficients,
+                                kernel_neighbourhood,
+                                basis_adjoint)
+
+        # assign
+        InverseGriddingKB.__call__ = _apply
+
+    @staticmethod
+    def _get_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+
+        # iterator function
+        _get_target_point = _iterator._get_noncart_points_parallelize_over_all
+
+        # gather function
+        gather = _gather._data
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(noncart_data, cart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(nframes*batch_size*npts):
+
+                # get current frame and k-space index
+                frame, batch, target = _get_target_point(i, batch_size, npts)
+
+                # gather data within kernel radius
+                for point in kernel_neighbourhood:
+                    value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
+
+                    # update
+                    gather(noncart_data, cart_data, frame, batch, target, source, value)
+
+        return _callback
+
+    @staticmethod
+    def _get_lowrank_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+
+        # iterator function
+        _get_target_point = _iterator._get_noncart_points_parallelize_over_all
+
+        # gather function
+        gather = _gather._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(noncart_data, cart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis_adjoint):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis_adjoint.shape[-1]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(nframes*batch_size*npts):
+
+                # get current frame and k-space index
+                frame, batch, target = _get_target_point(i, batch_size, npts)
+
+                # gather data within kernel radius
+                for point in kernel_neighbourhood:
+                    value, source = kernel(frame, target, point, kvalue, kidx, grid_off)
+
+                    # update
+                    gather(noncart_data, cart_data, frame, batch, target, source, value, basis_adjoint, ncoeff)
 
 
+        return _callback
+    
+    
+class GriddingKB:
+    """Forward (nonuniform-to-uniform) Kaiser-Bessel (KB) interpolation."""
+
+    apply: Callable
+
+    def __init__(self, data_size, kernel_tuple, basis, threadsperblock):
+
+        # unpack kernel dict
+        kernel_sparse_coefficients = kernel_tuple
+        kernel_width = kernel_tuple[-2]
+        ndim = kernel_tuple[0].shape[0]
+
+        # get kernel neighbourhood
+        kernel_neighbourhood = np.array(_iterator._get_neighbourhood(*kernel_width))
+
+        # select correct sub-routine
+        if basis is None:
+            callback = GriddingKB._get_callback(ndim)
+
+            def _apply(self, cart_data, noncart_data):
+                return callback(cart_data, noncart_data,
+                                kernel_sparse_coefficients,
+                                kernel_neighbourhood)
+
+        else:
+            callback = GriddingKB._get_lowrank_callback(ndim)
+
+            def _apply(self, cart_data, noncart_data):
+                return callback(cart_data, noncart_data,
+                                kernel_sparse_coefficients,
+                                kernel_neighbourhood,
+                                basis)
+
+        # assign
+        GriddingKB.__call__ = _apply
+
+    @staticmethod
+    def _get_callback(ndim):
+                
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+        
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # parallelize over frames and batches
+            for i in nb.prange(nframes*batch_size):
+                
+                # get current frame and k-space index
+                frame, batch = _get_source_point(i, batch_size)
+
+                # iterate over readout points
+                for source in range(npts):
+
+                    # spread data within kernel radius
+                    for point in kernel_neighbourhood:
+                        value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+
+                        # update
+                        spread(cart_data, noncart_data, frame, batch, source, target, value)
+
+        return _callback
+    
+
+    @staticmethod
+    def _get_viewsharing_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # update target
+                                spread(cart_data, noncart_data, frame + share_idx, batch, source, coeff, target, value, basis)
+
+        return _callback
+    
+    @staticmethod
+    def _get_swkh_viewsharing_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width,
+                      spatial_weight,
+                      temporal_weight):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # update kernel according to spatial weight
+                            value *= spatial_weight[target]
+
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # select temporal weight
+                                tw = temporal_weight[frame, hwidth]
+                                # update target
+                                spread(cart_data, noncart_data, frame, batch, source, coeff, target, tw * value, basis)
+
+        return _callback
+
+    @staticmethod
+    def _get_lowrank_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(nframes):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+
+                            # update
+                            spread(cart_data, noncart_data, frame, batch, source, coeff, target, value, basis)
+
+        return _callback
+    
+    @staticmethod
+    def _get_viewsharing_lowrank_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # update target
+                                spread(cart_data, noncart_data, frame + share_idx, batch, source, coeff, target, value, basis)
+
+        return _callback
+    
+    @staticmethod
+    def _get_swkh_viewsharing_lowrank_callback(ndim):
+
+        # kernel function
+        kernel = _kernel._evaluate("KB")[ndim-1]
+                
+        # iterator function
+        _get_source_point = _iterator._get_noncart_points_parallelize_over_batch_and_frame
+
+        # spread function
+        spread = _spread._data_lowrank
+
+        @nb.njit(fastmath=True, parallel=True)  # pragma: no cover
+        def _callback(cart_data, noncart_data,
+                      kernel_sparse_coefficients,
+                      kernel_neighbourhood,
+                      basis,
+                      window_width,
+                      spatial_weight,
+                      temporal_weight):
+
+            # get shapes
+            nframes, batch_size, npts = noncart_data.shape
+            ncoeff = basis.shape[0]
+
+            # unpack kernel tuple: kernel value, index and width (x, y, z) + grid shape (nx, ny, nz)
+            kvalue, kidx, _, grid_off = kernel_sparse_coefficients
+            
+            # get half window width
+            hwidth = window_width // 2
+                        
+            # parallelize over frames, batches and k-space points
+            for i in nb.prange(ncoeff*batch_size):
+
+                # get current frame and k-space index
+                coeff, batch = _get_source_point(i, batch_size)
+
+                # iterate over frames
+                for frame in range(hwidth, nframes-hwidth):
+
+                    # iterate over readout points
+                    for source in range(npts):
+                        
+                        # spread data within kernel radius
+                        for point in kernel_neighbourhood:
+                            value, target = kernel(frame, source, point, kvalue, kidx, grid_off)
+                            
+                            # update kernel according to spatial weight
+                            value *= spatial_weight[target]
+
+                            # iterate over sharing window
+                            for share_idx in range(-hwidth, hwidth):
+                                # select temporal weight
+                                tw = temporal_weight[frame, hwidth]
+                                # update target
+                                spread(cart_data, noncart_data, frame, batch, source, coeff, target, tw * value, basis)
+
+        return _callback
+
+#%% local utils
 class _iterator(_common._iterator):
-
     _get_noncart_points_parallelize_over_all = staticmethod(nb.njit(
         _common._iterator._get_noncart_points_parallelize_over_all,
         fastmath=True, cache=True))
@@ -377,4 +1064,3 @@ class _spread:
 
         # update data point
         data_out[idx_out] += weight * data_in[idx_in]
-

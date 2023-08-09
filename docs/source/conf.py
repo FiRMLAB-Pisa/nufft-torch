@@ -59,7 +59,6 @@ html_theme_options = {
     "logo": {
         "image_light": "_static/nufftorch_logo.png",
         "image_dark": "_static/nufftorch_logo_dark.png",
-        "text": "cmrseq",
         "scale": "100%"
     },
 

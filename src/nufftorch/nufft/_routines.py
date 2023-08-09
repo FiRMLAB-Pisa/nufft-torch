@@ -7,10 +7,9 @@ import torch
 
 from torch import Tensor
 
-from nufftorch.subroutines import _subroutines
-
 from nufftorch.subroutines._factory import NonCartesianToeplitzFactory
 from nufftorch.subroutines._factory import NUFFTFactory
+from nufftorch.subroutines import _subroutines
 
 def prepare_nufft(coord: Tensor,
                   shape: Union[int, List[int], Tuple[int]],
