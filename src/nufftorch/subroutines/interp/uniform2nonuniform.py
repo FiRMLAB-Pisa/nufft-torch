@@ -2,10 +2,6 @@ import numba as nb
 import torch
 
 
-def uniform2nonuniform():
-    pass
-
-
 # %% CPU
 @nb.njit(fastmath=True, parallel=True, cache=True)  # pragma: no cover
 def _uniform2nonuniform_cpu_1d(noncart_data, cart_data, interp_value, interp_index):
