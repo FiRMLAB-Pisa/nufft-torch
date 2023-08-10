@@ -2,7 +2,7 @@
 import numba as nb
 import torch
 
-
+#%% CPU
 @nb.njit(fastmath=True, parallel=True, cache=True)  # pragma: no cover
 def _nonuniform2uniform_lowrank_khvs_cpu_1d(
     cart_data,
@@ -234,7 +234,10 @@ def _nonuniform2uniform_lowrank_khvs_cpu_3d(
 
     return cart_data
 
+# function table
+_nonuniform2uniform_lowrank_khvs_cpu = [_nonuniform2uniform_lowrank_khvs_cpu_1d, _nonuniform2uniform_lowrank_khvs_cpu_2d, _nonuniform2uniform_lowrank_khvs_cpu_3d]
 
+#%% GPU
 if torch.cuda.is_available():
 
     @nb.cuda.jit()
@@ -793,3 +796,7 @@ if torch.cuda.is_available():
                                 )
 
         return cart_data
+
+    # function table
+    _nonuniform2uniform_lowrank_khvs_gpu = [_nonuniform2uniform_lowrank_khvs_gpu_1d, _nonuniform2uniform_lowrank_khvs_gpu_2d, _nonuniform2uniform_lowrank_khvs_gpu_3d]
+    _nonuniform2uniform_lowrank_khvs_gpu_cplx = [_nonuniform2uniform_lowrank_khvs_gpu_cplx_1d, _nonuniform2uniform_lowrank_khvs_gpu_cplx_2d, _nonuniform2uniform_lowrank_khvs_gpu_cplx_3d]

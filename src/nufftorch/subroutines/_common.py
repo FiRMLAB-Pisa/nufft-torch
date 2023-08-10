@@ -6,8 +6,7 @@ import itertools
 
 
 def _dot_product(out, in_a, in_b):
-    """Naive implementation of matrix-matrix product for fast multiplication of (small) stacked matrices."""
-
+    """Naive implementation of matrix-vector product for fast multiplication of (small) stacked matrices to stacked vectors."""
     row, col = in_a.shape
 
     for j in range(col):
@@ -42,16 +41,17 @@ class _kernel:
     """Utility routines to evaluate interpolation kernel at a given point."""
 
     @staticmethod
-    def _make_evaluate(kernel_type):
+    def make_evaluate(kernel_type):
+        """Prepare kernel evaluation function according to kernel type and number of spatial dimensions."""
         if kernel_type == "NN":
 
-            def _evaluate_1d(frame, sample_idx, kernel_idx, grid_offset):
+            def evaluate_1d(frame, sample_idx, kernel_idx, grid_offset):
                 # get index
                 index = kernel_idx[0][frame][sample_idx]
 
                 return index
 
-            def _evaluate_2d(frame, sample_idx, kernel_idx, grid_offset):
+            def evaluate_2d(frame, sample_idx, kernel_idx, grid_offset):
                 # get index
                 index = (
                     kernel_idx[0][frame][sample_idx]
@@ -60,7 +60,7 @@ class _kernel:
 
                 return index
 
-            def _evaluate_3d(frame, sample_idx, kernel_idx, grid_offset):
+            def evaluate_3d(frame, sample_idx, kernel_idx, grid_offset):
                 # get index
                 index = (
                     kernel_idx[0][frame][sample_idx]
@@ -72,7 +72,7 @@ class _kernel:
 
         elif kernel_type == "KB":
 
-            def _evaluate_1d(
+            def evaluate_1d(
                 frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, grid_offset
             ):
                 # get value
@@ -83,7 +83,7 @@ class _kernel:
 
                 return value, index
 
-            def _evaluate_2d(
+            def evaluate_2d(
                 frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, grid_offset
             ):
                 # get value
@@ -101,7 +101,7 @@ class _kernel:
 
                 return value, index
 
-            def _evaluate_3d(
+            def evaluate_3d(
                 frame, sample_idx, neighbour_idx, kernel_value, kernel_idx, grid_offset
             ):
                 # get value
@@ -122,41 +122,58 @@ class _kernel:
 
                 return value, index
 
-        return _evaluate_1d, _evaluate_2d, _evaluate_3d
+        return evaluate_1d, evaluate_2d, evaluate_3d
 
 
 class _gather:
     @staticmethod
-    def _data(data_out, data_in, frame, batch, index_out, index_in, kernel_value):
-        # get output and input locations
-        idx_out = (frame, batch, index_out)
-        idx_in = (frame, batch, index_in)
-
-        # update data
-        data_out[idx_out] += kernel_value * data_in[idx_in]
+    def make(kernel_type):
+        """Prepare data gathering function according to kernel type."""
+        if kernel_type == 'NN':
+            def data(data_out, data_in, frame, batch, index_out, index_in):
+                # get output and input locations
+                idx_out = (frame, batch, index_out)
+                idx_in = (frame, batch, index_in)
+        
+                # update data
+                data_out[idx_out] += data_in[idx_in]
+                
+        elif kernel_type == 'KB':
+            def data(data_out, data_in, frame, batch, index_out, index_in, kernel_value):
+                # get output and input locations
+                idx_out = (frame, batch, index_out)
+                idx_in = (frame, batch, index_in)
+        
+                # update data
+                data_out[idx_out] += kernel_value * data_in[idx_in]
+        
+        return data
 
     @staticmethod
-    def _data_lowrank(
-        data_out,
-        data_in,
-        frame,
-        batch,
-        index_out,
-        index_in,
-        kernel_value,
-        basis_adjoint,
-        ncoeff,
-    ):
-        # get output locations
-        idx_out = (frame, batch, index_out)
-
-        # iterate over subspace coefficients
-        for coeff in range(ncoeff):
-            # get input locations
-            idx_in = (coeff, batch, index_in)
-
-            # get total weight
-            weight = kernel_value * basis_adjoint[frame, coeff]
-
-            # update data
-            data_out[idx_out] += weight * data_in[idx_in]
+    def make_lowrank(kernel_type):
+        """Prepare data gathering function according to kernel type."""
+        if kernel_type == 'NN':
+            def data(
+                data_out,
+                data_in,
+                frame,
+                batch,
+                index_out,
+                index_in,
+                kernel_value,
+                basis_adjoint,
+                ncoeff,
+            ):
+                # get output locations
+                idx_out = (frame, batch, index_out)
+        
+                # iterate over subspace coefficients
+                for coeff in range(ncoeff):
+                    # get input locations
+                    idx_in = (coeff, batch, index_in)
+        
+                    # get total weight
+                    weight = kernel_value * basis_adjoint[frame, coeff]
+        
+                    # update data
+                    data_out[idx_out] += weight * data_in[idx_in]

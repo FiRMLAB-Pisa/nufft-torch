@@ -2,7 +2,13 @@
 import numba as nb
 import torch
 
-
+def _uniform2nonuniform(noncart_data, cart_data, interp_value, interp_index, ndim):
+    # check computational backend
+    if nb.cuda.is_cuda_array(noncart_data):
+        _uniform2nonuniform_gpu[ndim-1](noncart_data, cart_data, interp_value, interp_index)
+    else:
+        _uniform2nonuniform_cpu[ndim-1](noncart_data, cart_data, interp_value, interp_index)
+    
 # %% CPU
 @nb.njit(fastmath=True, parallel=True, cache=True)  # pragma: no cover
 def _uniform2nonuniform_cpu_1d(noncart_data, cart_data, interp_value, interp_index):
@@ -115,6 +121,8 @@ def _uniform2nonuniform_cpu_3d(noncart_data, cart_data, interp_value, interp_ind
 
     return noncart_data
 
+# function table
+_uniform2nonuniform_cpu = [_uniform2nonuniform_cpu_1d, _uniform2nonuniform_cpu_2d, _uniform2nonuniform_cpu_3d]
 
 # %% GPU
 if torch.cuda.is_available():
@@ -230,3 +238,6 @@ if torch.cuda.is_available():
                         )
 
         return noncart_data
+
+# function table
+_uniform2nonuniform_gpu = [_uniform2nonuniform_gpu_1d, _uniform2nonuniform_gpu_2d, _uniform2nonuniform_gpu_3d]
