@@ -12,6 +12,7 @@ Main FFT/NUFFT/Toeplitz routines.
 # pylint: disable=line-too-long
 # pylint: disable=too-many-arguments
 
+import gc
 from typing import List, Tuple, Dict, Union
 
 import numpy as np
@@ -57,6 +58,9 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     device_dict = interpolator['device_dict']
     device = device_dict['device']
 
+    # Collect garbage
+    gc.collect()
+  
     # Copy input to avoid original data modification
     image = image.clone()
 
@@ -79,6 +83,9 @@ def nufft(image: Tensor, interpolator: Dict) -> Tensor:
     # Bring back to original device
     kdata, image = dispatcher.gather(kdata, image)
 
+    # Collect garbage
+    gc.collect()
+
     return kdata
 
 
@@ -94,6 +101,9 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
     scale = interpolator['scale']
     device_dict = interpolator['device_dict']
     device = device_dict['device']
+
+    # Collect garbage
+    gc.collect()
 
     # Offload to computational device
     dispatcher = DeviceDispatch(computation_device=device, data_device=kdata.device)
@@ -113,6 +123,9 @@ def nufft_adjoint(kdata: Tensor, interpolator: Dict) -> Tensor:
 
     # Bring back to original device
     image, kdata = dispatcher.gather(image, kdata)
+
+    # Collect garbage
+    gc.collect()
 
     return image * (oversamp**ndim)
 
@@ -150,6 +163,9 @@ def toeplitz_convolution(image: Tensor, toeplitz_dict: Dict) -> Tensor:
     ndim = toeplitz_dict['ndim']
     oversamp = toeplitz_dict['oversamp']
 
+    # Collect garbage
+    gc.collect()
+
     # Offload to computational device
     dispatcher = DeviceDispatch(computation_device=device, data_device=image.device)
     image = dispatcher.dispatch(image)
@@ -185,5 +201,8 @@ def toeplitz_convolution(image: Tensor, toeplitz_dict: Dict) -> Tensor:
 
     # Bring back to original device
     image = dispatcher.gather(image)
+
+    # Collect garbage
+    gc.collect()
     
     return image
