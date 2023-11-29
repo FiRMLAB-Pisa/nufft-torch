@@ -515,10 +515,10 @@ class BackendBridge:
         device = tensors[0].device
 
         if device.type == 'cpu':
-            arrays = [tensor.resolve_conj().detach().contiguous().numpy()
+            arrays = [tensor.detach().contiguous().cpu().numpy()
                       for tensor in tensors]
         else:
-            arrays = [nb.cuda.as_cuda_array(tensor.resolve_conj().detach().contiguous())
+            arrays = [nb.cuda.as_cuda_array(tensor.contiguous())
                       for tensor in tensors]
             
         if len(arrays) == 1:
